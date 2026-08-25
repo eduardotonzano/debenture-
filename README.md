@@ -70,6 +70,42 @@ local) e:
 Isso é trabalho de ajuste de seletores sobre uma arquitetura já pronta —
 não é para refazer o desenho do provider.
 
+### Descontinuação anunciada do SND
+
+O próprio debentures.com.br hoje exibe um aviso: "Em breve, este site será
+descontinuado. Para consultar informações sobre emissões e estoque de
+debêntures, migre para o ANBIMA Data". Não há data anunciada. Isso significa
+que `SndScraperProvider` é uma fonte de prazo de validade desconhecido — vale
+implementar e usar enquanto durar, mas não vale investir em robustez além do
+necessário (ex.: não construir testes de regressão elaborados pra layout que
+pode sumir a qualquer momento — ver Fase 5).
+
+## Decisão: ANBIMA Data (portal público) fica fora do escopo
+
+Investigamos `data.anbima.com.br` (a página web para onde o SND está
+redirecionando) como possível substituto do SND. Resultado, via HAR de
+tráfego de rede capturado pelo usuário:
+
+- A busca e as características completas vêm de uma API JSON real
+  (`data-api.prd.anbima.com.br/web-bff/v1/debentures`), com exatamente os
+  campos que precisamos (ISIN, indexador, remuneração, garantia, emissor,
+  datas, quantidades, agente fiduciário etc.).
+- Toda chamada a essa API exige um header `g-google-authorization`: um JWT
+  assinado (HS256) que embrulha um token de verificação do Google reCAPTCHA,
+  gerado no navegador a cada sessão.
+
+Ou seja, apesar de a tela parecer "pública, sem login", a API por trás dela
+é deliberadamente protegida contra automação. Chamar essa API
+programaticamente exigiria forjar ou replicar esse token — isso é
+precisamente a "engenharia reversa do ANBIMA Data público" que o escopo
+original do projeto proíbe (ver seção "O que este projeto não faz"). **Decisão
+confirmada com o usuário: não construir nenhum provider contra
+`data.anbima.com.br` ou sua API.** Campos de característica completos ficam
+"indisponível" a menos que:
+(a) a `AnbimaAPIProvider` da Fase 3 seja ligada com credencial paga oficial,
+ou (b) o dado seja colado manualmente via `ManualInputProvider` (o usuário
+consultando no próprio navegador, como fez para diagnosticar isso).
+
 ## Uso
 
 ```bash
