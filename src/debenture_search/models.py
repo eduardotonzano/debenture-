@@ -160,6 +160,19 @@ class Debenture:
 
     rating: SourcedValue = field(default_factory=lambda: SourcedValue(None))
 
+    # Como a emissão foi realizada — forma, regime de registro na CVM,
+    # atos societários que aprovaram, início de distribuição.
+    forma: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    registro_cvm_emissao: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    ato_societario: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    inicio_distribuicao: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+
+    # Agentes contratados na emissão.
+    banco_mandatario: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    agente_fiduciario: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    instituicao_depositaria: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    coordenador_lider: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+
     precos: list[MarketPriceSnapshot] = field(default_factory=list)
     eventos: list[Event] = field(default_factory=list)
     documentos: list[Document] = field(default_factory=list)

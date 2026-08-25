@@ -51,6 +51,20 @@
 </div>
 
 <div class="card">
+  <h2>Emissão</h2>
+  <div class="field-grid">
+    {{ m.campo("Forma", deb.forma) }}
+    {{ m.campo("Registro CVM da emissão", deb.registro_cvm_emissao) }}
+    {{ m.campo("Início de distribuição", deb.inicio_distribuicao) }}
+    {{ m.campo("Atos societários", deb.ato_societario) }}
+    {{ m.campo("Banco mandatário", deb.banco_mandatario) }}
+    {{ m.campo("Agente fiduciário", deb.agente_fiduciario) }}
+    {{ m.campo("Instituição depositária", deb.instituicao_depositaria) }}
+    {{ m.campo("Coordenador líder", deb.coordenador_lider) }}
+  </div>
+</div>
+
+<div class="card">
   <h2>Mercado secundário</h2>
   {% if deb.precos %}
   <table>

@@ -79,11 +79,25 @@ def test_parse_caracteristicas_html_campos_principais() -> None:
     # preenchido para esta debênture específica) — indisponível é o
     # resultado honesto, não None por falha de parsing.
     assert deb.rating.valor is None
+
+    # Como a emissão foi realizada + agentes contratados (pedido explícito
+    # do usuário: "banco coordenador", "como foi realizada a emissão").
+    assert deb.forma.valor == "Escritural"
+    assert deb.registro_cvm_emissao.valor == "DISPENSA ICVM 476/09 em 10/06/2013"
+    assert deb.ato_societario.valor == "AGE em 12/03/2013 e RCA em 30/04/2013"
+    assert deb.inicio_distribuicao.valor.isoformat() == "2013-06-11"
+    assert deb.banco_mandatario.valor == "BANCO BRADESCO S/A"
+    assert deb.agente_fiduciario.valor == "GDC PART.SERV.FIDUCIARIOS DTVM LTDA"
+    assert deb.instituicao_depositaria.valor == "BANCO BRADESCO S/A"
+    assert deb.coordenador_lider.valor == "BCO BTG PACTUAL S/A"
+
     for campo in (
         deb.isin, deb.codigo_ativo, deb.emissor_nome, deb.indexador, deb.taxa,
         deb.data_emissao, deb.data_vencimento, deb.especie, deb.classe,
         deb.quantidade_emitida, deb.quantidade_mercado, deb.valor_nominal_unitario,
-        deb.situacao,
+        deb.situacao, deb.forma, deb.registro_cvm_emissao, deb.ato_societario,
+        deb.inicio_distribuicao, deb.banco_mandatario, deb.agente_fiduciario,
+        deb.instituicao_depositaria, deb.coordenador_lider,
     ):
         assert campo.fonte == "SND"
 

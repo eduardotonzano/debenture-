@@ -43,6 +43,12 @@ O que está implementado e testado:
   sobre a fonte automática, refletido na ficha imediatamente). Validada
   navegando o fluxo real com Playwright (busca → ficha → adicionar dado
   manual → ficha atualizada → desambiguação → nada encontrado).
+- **Seção "Emissão" na ficha**: forma, regime de registro na CVM (ex.:
+  "DISPENSA ICVM 476/09 em 10/06/2013"), atos societários que aprovaram,
+  início de distribuição, banco mandatário, agente fiduciário, instituição
+  depositária e coordenador líder — todos vindos do SND, mesma página de
+  características. Adicionado a pedido do usuário ("como foi realizada a
+  emissão", "banco coordenador").
 - 41 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 

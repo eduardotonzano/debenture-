@@ -272,7 +272,17 @@ def _parse_ativo_options(html: str) -> list[str]:
 
 
 def _flatten(pagina_html: str) -> str:
-    texto = re.sub(r"<br\s*/?>", "\n", pagina_html, flags=re.I)
+    """Achata HTML pra texto simples pra extração por rótulo.
+
+    Colapsa toda quebra de linha FÍSICA do HTML fonte (que o navegador
+    também ignora — só vira espaço) antes de introduzir nossas próprias
+    quebras de linha semânticas (uma por <br> e por fronteira de tag). Sem
+    isso, um valor que quebra linha no meio do HTML fonte (comum nas
+    tabelas do SND, ex.: "Atos Societários") ficava truncado no primeiro \\n
+    físico, que `_campo` confundia com o fim do valor.
+    """
+    sem_quebras_fisicas = re.sub(r"\s+", " ", pagina_html)
+    texto = re.sub(r"<br\s*/?>", "\n", sem_quebras_fisicas, flags=re.I)
     texto = re.sub(r"<[^>]+>", "\n", texto)
     texto = html.unescape(texto)
     texto = re.sub(r"[ \t]+", " ", texto)
@@ -313,6 +323,20 @@ def _campo_data(texto: str, prefixo_sem_acento: str) -> date | None:
     for m in re.finditer(re.escape(prefixo_sem_acento) + r"[^:\n]{0,10}:\s*\n?\s*(\d{2}/\d{2}/\d{4})", texto):
         return _parse_data_br(m.group(1))
     return None
+
+
+def _campo_regime_registro(texto: str) -> str | None:
+    """'Registro CVM da Emissão' é servido em células de tabela separadas
+    ('DISPENSA ICVM 476/09' | 'em' | '10/06/2013') em vez de uma linha só —
+    junta as duas partes quando a segunda existir."""
+    m = re.search(
+        r"Registro CVM da Emiss[^:\n]{0,10}:\s*\n?\s*([^\n]+)\s*\n\s*em\s*\n?\s*([^\n]+)",
+        texto,
+    )
+    if m:
+        regime, data_str = m.group(1).strip(), m.group(2).strip()
+        return f"{regime} em {data_str}" if data_str else regime
+    return _campo(texto, "Registro CVM da Emiss")
 
 
 def _extrair_campo_texto(html: str, label_sem_acento: str) -> str | None:
@@ -398,6 +422,14 @@ def _parse_caracteristicas_html(html: str, codigo_ativo: str) -> Debenture:
         valor_nominal_unitario=SourcedValue(valor_nominal, fonte=FONTE),
         situacao=SourcedValue(_map_situacao(_campo(texto, "Situa")), fonte=FONTE),
         rating=SourcedValue(rating, fonte=FONTE),
+        forma=SourcedValue(_campo(texto, "Forma"), fonte=FONTE),
+        registro_cvm_emissao=SourcedValue(_campo_regime_registro(texto), fonte=FONTE),
+        ato_societario=SourcedValue(_campo(texto, "Atos Societ"), fonte=FONTE),
+        inicio_distribuicao=SourcedValue(_campo_data(texto, "cio de Distribui"), fonte=FONTE),
+        banco_mandatario=SourcedValue(_campo(texto, "Banco Mandat"), fonte=FONTE),
+        agente_fiduciario=SourcedValue(_campo(texto, "Agente Fiduci"), fonte=FONTE),
+        instituicao_depositaria=SourcedValue(_campo(texto, "Institui"), fonte=FONTE),
+        coordenador_lider=SourcedValue(_campo(texto, "Coordenador L"), fonte=FONTE),
     )
 
 
