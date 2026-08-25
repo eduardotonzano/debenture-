@@ -1,0 +1,25 @@
+{
+  "_aviso": "Fixture SINTÉTICA — NÃO é uma resposta real da ANBIMA Developers API. O usuário não tem credencial ainda e o domínio da API está bloqueado neste ambiente. Este JSON foi escrito à mão como HIPÓTESE de schema, inspirada (sem confirmação) na estrutura de dados que a ANBIMA usa no seu próprio site. Substituir por uma resposta real assim que houver credencial — ver docstring de providers/anbima_api.py.",
+  "isin": "BRTESTDBS001",
+  "codigo_b3": "TEST12",
+  "numero_serie": "1",
+  "classe": "Simples",
+  "remuneracao": "DI + 2.0000%",
+  "data_vencimento": "2030-01-15",
+  "quantidade_mercado": "50000",
+  "valor_nominal_atual": "1050.123456",
+  "preco_indicativo": "1048.987654",
+  "indexador": {
+    "nome": "DI"
+  },
+  "emissao": {
+    "numero_emissao": "3",
+    "data_emissao": "2020-01-15",
+    "garantia": "Quirografária",
+    "quantidade_emitida": "60000",
+    "emissor": {
+      "nome": "EMPRESA TESTE FIXTURE S.A.",
+      "cnpj": "00000000000191"
+    }
+  }
+}

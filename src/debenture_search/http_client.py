@@ -42,9 +42,14 @@ class RateLimitedHttpClient:
                     time.sleep(remaining)
             self._last_request_at = time.monotonic()
 
-    def get(self, url: str, params: dict[str, str] | None = None) -> httpx.Response:
+    def get(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
         self._throttle()
-        return self._client.get(url, params=params)
+        return self._client.get(url, params=params, headers=headers)
 
     def post(self, url: str, data: dict[str, str] | None = None) -> httpx.Response:
         self._throttle()

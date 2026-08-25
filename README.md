@@ -5,7 +5,7 @@ nome da empresa emissora — retorna uma ficha completa do ativo (não um
 dashboard de múltiplos ativos), com cada campo marcado com sua fonte ou
 "indisponível". Uso interno/pessoal, sem autenticação multiusuário.
 
-## Status (Fase 1 + Fase 2 concluídas)
+## Status (Fase 1 + Fase 2 + Fase 3 concluídas)
 
 O que está implementado e testado:
 
@@ -77,7 +77,19 @@ O que está implementado e testado:
   detecção de "nenhum resultado" foi validada contra página real (não
   havia nenhuma inadimplência corrente no momento da captura) — mesma
   cautela de "Vencimentos Antecipados" pro parsing de linha populada.
-- 51 testes automatizados (parsing + integração dos providers + cache +
+- **`AnbimaAPIProvider`** (Fase 3): interface completa, pluggável via
+  `ANBIMA_API_KEY` — sem a env var, `is_available()` retorna `False` e o
+  aggregator a ignora automaticamente (confirmado: `characteristics_providers`
+  vira `['SND', 'Manual']` sem a chave, `['SND', 'ANBIMA API', 'Manual']`
+  com ela). Precedência: SND (base gratuita) < ANBIMA API (mais completa,
+  quando disponível) < Manual (override do analista, sempre vence).
+  **Usuário ainda não tem credencial** — o contrato real da API (URL base,
+  autenticação, schema de resposta) não pôde ser confirmado (domínio
+  bloqueado neste ambiente, igual ao SND/ANBIMA Data). Tudo isso está
+  isolado e marcado `TODO(confirmar)` em `providers/anbima_api.py`, pronto
+  pra ajustar quando a credencial existir — ver docstring do módulo pro
+  passo a passo. Novo campo `preco_indicativo` no modelo e na ficha.
+- 56 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -199,9 +211,13 @@ Por padrão os dados locais (cache e overrides manuais) ficam em
    desambiguação, tela de input manual. Validada com Playwright contra o
    fluxo real (busca → ficha → adicionar dado manual → desambiguação →
    nada encontrado).
-3. **Fase 3** — `AnbimaAPIProvider` (características completas + preço
-   indicativo), plugável via `ANBIMA_API_KEY`; se ausente, a fonte fica
-   desligada sem quebrar o resto do sistema.
+3. **Fase 3 (concluída — estrutura pronta, aguardando credencial)** —
+   `AnbimaAPIProvider` (características completas + preço indicativo),
+   plugável via `ANBIMA_API_KEY`; sem ela, a fonte fica desligada sem
+   quebrar o resto do sistema (confirmado por teste). Contrato real da
+   API (URL, autenticação, schema) ainda não confirmado — usuário não tem
+   credencial ainda; ver `providers/anbima_api.py` para o que falta
+   ajustar quando ela existir.
 4. **Fase 4** — `CvmDocumentsProvider` (prospecto, escritura, fatos
    relevantes), complementar/opcional.
 5. **Fase 5 (opcional)** — exportação da ficha, histórico de buscas,

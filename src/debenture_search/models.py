@@ -154,6 +154,7 @@ class Debenture:
     quantidade_emitida: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     quantidade_mercado: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     valor_nominal_unitario: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    preco_indicativo: SourcedValue = field(default_factory=lambda: SourcedValue(None))
 
     situacao: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     motivo_saida: SourcedValue = field(default_factory=lambda: SourcedValue(None))
