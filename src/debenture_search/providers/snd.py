@@ -35,6 +35,7 @@ O que ainda é incerto (marcado com TODO(verificar) no código):
 
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 from datetime import date, datetime
@@ -270,9 +271,10 @@ def _parse_ativo_options(html: str) -> list[str]:
 # -- parsing: caracteristicas_d.asp -----------------------------------------
 
 
-def _flatten(html: str) -> str:
-    texto = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
+def _flatten(pagina_html: str) -> str:
+    texto = re.sub(r"<br\s*/?>", "\n", pagina_html, flags=re.I)
     texto = re.sub(r"<[^>]+>", "\n", texto)
+    texto = html.unescape(texto)
     texto = re.sub(r"[ \t]+", " ", texto)
     texto = re.sub(r"\n[ \t]*\n+", "\n", texto)
     return texto

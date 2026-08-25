@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Dado manual — {{ ref.codigo_ativo or ref.isin }}{% endblock %}
+{% block content %}
+<h1 style="margin-top:0">Adicionar dado manual</h1>
+<p class="hint">
+  Para <strong>{{ ref.codigo_ativo or ref.isin }}</strong>{% if ref.nome_emissor %} — {{ ref.nome_emissor }}{% endif %}.
+  Use isto para dados que nenhuma fonte automática cobre (ex.: rating de agência). O valor colado aqui
+  sempre tem prioridade sobre o que vier do SND na ficha.
+</p>
+<form class="manual-form" action="/manual" method="post">
+  <input type="hidden" name="codigo_ativo" value="{{ ref.codigo_ativo or '' }}">
+  <input type="hidden" name="isin" value="{{ ref.isin or '' }}">
+  <input type="hidden" name="nome_emissor" value="{{ ref.nome_emissor or '' }}">
+
+  <div class="campo">
+    <label for="campo">Campo</label>
+    <select name="campo" id="campo">
+      {% for valor, rotulo in campos_suportados %}
+      <option value="{{ valor }}">{{ rotulo }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="campo">
+    <label for="valor">Valor</label>
+    <input type="text" name="valor" id="valor" required placeholder="ex.: AA-">
+  </div>
+
+  <div class="campo">
+    <label for="fonte">Fonte (de onde você tirou esse dado)</label>
+    <input type="text" name="fonte" id="fonte" required placeholder="ex.: Fitch, relatório 03/2026">
+  </div>
+
+  <button type="submit">Salvar</button>
+  <a class="btn btn-secondary" href="/ficha?{{ ref_params|urlencode_params }}">Cancelar</a>
+</form>
+{% endblock %}

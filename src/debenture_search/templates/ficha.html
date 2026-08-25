@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}{{ deb.codigo_ativo.valor or deb.isin.valor or 'Ficha' }} — Ficha{% endblock %}
+{% block content %}
+<div class="ficha-header">
+  <div>
+    <h1>{{ deb.codigo_ativo.valor or deb.isin.valor or ref.codigo_ativo or ref.isin }}</h1>
+    <div class="sub">{{ deb.emissor_nome.valor or ref.nome_emissor or "Emissor não identificado" }}</div>
+  </div>
+  <a class="btn btn-secondary" href="/">&larr; Nova busca</a>
+</div>
+
+<div class="toolbar">
+  <a class="btn" href="/manual?{{ ref_params|urlencode_params }}">+ Adicionar dado manual</a>
+</div>
+
+<div class="card">
+  <h2>Identificação</h2>
+  <div class="field-grid">
+    {{ m.campo("ISIN", deb.isin) }}
+    {{ m.campo("Código do ativo", deb.codigo_ativo) }}
+    {{ m.campo("Emissor", deb.emissor_nome) }}
+    {{ m.campo("CNPJ do emissor", deb.emissor_cnpj) }}
+    {{ m.campo("Número da emissão", deb.numero_emissao) }}
+    {{ m.campo("Número da série", deb.numero_serie) }}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Características</h2>
+  <div class="field-grid">
+    {{ m.campo("Indexador", deb.indexador) }}
+    {{ m.campo("Taxa", deb.taxa) }}
+    {{ m.campo("Data de emissão", deb.data_emissao) }}
+    {{ m.campo("Data de vencimento", deb.data_vencimento) }}
+    {{ m.campo("Espécie / garantia", deb.especie) }}
+    {{ m.campo("Classe", deb.classe) }}
+    {{ m.campo("Quantidade emitida", deb.quantidade_emitida) }}
+    {{ m.campo("Quantidade em mercado", deb.quantidade_mercado) }}
+    {{ m.campo("Valor nominal unitário", deb.valor_nominal_unitario) }}
+    {{ m.campo("Rating", deb.rating) }}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Situação</h2>
+  <div class="field-grid">
+    {{ m.campo("Situação", deb.situacao) }}
+    {{ m.campo("Motivo de saída", deb.motivo_saida) }}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Mercado secundário</h2>
+  {% if deb.precos %}
+  <table>
+    <thead>
+      <tr>
+        <th>Data</th><th>PU mínimo</th><th>PU médio</th><th>PU máximo</th>
+        <th>Qtd. negociada</th><th>Nº negócios</th><th>Fonte</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in deb.precos[:15] %}
+      <tr>
+        <td>{{ p.periodo_referencia }}</td>
+        <td>{{ fmt(p.pu_minimo.valor) if p.pu_minimo.disponivel else "—" }}</td>
+        <td>{{ fmt(p.pu_medio.valor) if p.pu_medio.disponivel else "—" }}</td>
+        <td>{{ fmt(p.pu_maximo.valor) if p.pu_maximo.disponivel else "—" }}</td>
+        <td>{{ fmt(p.quantidade_negociada.valor) if p.quantidade_negociada.disponivel else "—" }}</td>
+        <td>{{ fmt(p.numero_negocios.valor) if p.numero_negocios.disponivel else "—" }}</td>
+        <td><span class="badge badge-fonte">{{ p.pu_medio.fonte or "—" }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if deb.precos|length > 15 %}
+  <p class="hint" style="margin-top:10px">Mostrando as 15 negociações mais recentes de {{ deb.precos|length }} no total.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-msg">Nenhum dado de negociação disponível.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Eventos</h2>
+  {% if deb.eventos %}
+  <table>
+    <thead><tr><th>Tipo</th><th>Data prevista</th><th>Valor</th><th>Fonte</th></tr></thead>
+    <tbody>
+      {% for e in deb.eventos %}
+      <tr>
+        <td>{{ e.tipo.value }}</td>
+        <td>{{ fmt(e.data_prevista) }}</td>
+        <td>{{ fmt(e.valor.valor) if e.valor.disponivel else "—" }}</td>
+        <td><span class="badge badge-fonte">{{ e.fonte or "—" }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-msg">Nenhum evento futuro disponível.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Documentos</h2>
+  {% if deb.documentos %}
+  <ul>
+    {% for d in deb.documentos %}
+    <li><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.tipo.value }}</a>
+      <span class="badge badge-fonte">{{ d.fonte }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-msg">Nenhum documento disponível.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -5,7 +5,7 @@ nome da empresa emissora — retorna uma ficha completa do ativo (não um
 dashboard de múltiplos ativos), com cada campo marcado com sua fonte ou
 "indisponível". Uso interno/pessoal, sem autenticação multiusuário.
 
-## Status (Fase 1 — busca + integração SND + arquitetura de providers)
+## Status (Fase 1 + Fase 2 concluídas)
 
 O que está implementado e testado:
 
@@ -35,8 +35,26 @@ O que está implementado e testado:
   "Cobertura real do SND" abaixo.
 - CLI (`python -m debenture_search`) validada ponta a ponta com cache
   pré-populado (sem rede).
-- 28 testes automatizados (parsing puro + integração do provider + cache +
-  aggregator), todos rodam sem rede.
+- **UI web** (`web.py`, FastAPI + Jinja2): tela de busca única, ficha do
+  ativo em seções (Identificação, Características, Situação, Mercado
+  Secundário, Eventos, Documentos) com badge de fonte ou "indisponível"
+  campo a campo, tela de desambiguação quando a busca por emissor retorna
+  mais de uma série, e tela de input manual (o dado colado tem precedência
+  sobre a fonte automática, refletido na ficha imediatamente). Validada
+  navegando o fluxo real com Playwright (busca → ficha → adicionar dado
+  manual → ficha atualizada → desambiguação → nada encontrado).
+- 41 testes automatizados (parsing + integração dos providers + cache +
+  aggregator + rotas web), todos rodam sem rede.
+
+Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
+a heurística de "isso parece um código de ativo?" na busca (usada pra
+decidir se o termo digitado é ISIN, código ou nome de emissor) classificava
+qualquer palavra de 4 a 8 letras maiúsculas como código de ativo — então
+buscar por "BODYTECH" dava match nesse regex e tentava consultar o SND como
+se fosse um ticker, em vez de cair na busca por nome. Corrigido exigindo
+pelo menos um dígito no código (ver `query_parsing.py` e
+`tests/test_query_parsing.py`) — códigos reais de debênture sempre têm
+número de série (ex.: BODY12, TEPA23).
 
 ## Cobertura real do SND
 
@@ -119,6 +137,9 @@ python3 -m venv .venv
 
 # Rodar a suíte de testes (não depende de rede)
 .venv/bin/python -m pytest
+
+# Subir a UI web (http://127.0.0.1:8000)
+.venv/bin/uvicorn debenture_search.web:app --reload
 ```
 
 Por padrão os dados locais (cache e overrides manuais) ficam em
@@ -129,8 +150,11 @@ Por padrão os dados locais (cache e overrides manuais) ficam em
 1. **Fase 1 (concluída)** — modelo de dados, interfaces de provider, SND
    (características/situação/mercado secundário) com parsing validado
    contra HTML real, cache, CLI de validação ponta a ponta.
-2. **Fase 2** — UI da ficha do ativo (busca única + seções + fonte por
-   campo + tela de desambiguação), input manual via tela.
+2. **Fase 2 (concluída)** — UI web (FastAPI + Jinja2): tela única de busca,
+   ficha do ativo em seções com fonte/indisponível por campo, tela de
+   desambiguação, tela de input manual. Validada com Playwright contra o
+   fluxo real (busca → ficha → adicionar dado manual → desambiguação →
+   nada encontrado).
 3. **Fase 3** — `AnbimaAPIProvider` (características completas + preço
    indicativo), plugável via `ANBIMA_API_KEY`; se ausente, a fonte fica
    desligada sem quebrar o resto do sistema.

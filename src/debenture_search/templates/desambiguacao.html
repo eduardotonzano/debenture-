@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Escolha a série — {{ q }}{% endblock %}
+{% block content %}
+<h1 style="margin-top:0">Mais de uma série encontrada</h1>
+<p class="hint">A busca por "{{ q }}" encontrou {{ candidatos|length }} séries. Escolha uma:</p>
+<ul class="lista-candidatos">
+  {% for ref, params in candidatos %}
+  <li>
+    <a href="/ficha?{{ params|urlencode_params }}">{{ ref.codigo_ativo or ref.isin }}</a>
+    <div class="meta">{{ ref.nome_emissor }}{% if ref.isin %} · ISIN {{ ref.isin }}{% endif %}</div>
+  </li>
+  {% endfor %}
+</ul>
+<p><a class="btn btn-secondary" href="/">&larr; Nova busca</a></p>
+{% endblock %}

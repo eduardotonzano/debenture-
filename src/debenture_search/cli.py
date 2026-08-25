@@ -12,38 +12,18 @@ funciona ponta a ponta antes de existir qualquer tela (ver plano de fases).
 from __future__ import annotations
 
 import json
-import re
 
 import typer
 
 from debenture_search.aggregator import Ambiguous
 from debenture_search.compose import build_aggregator
 from debenture_search.config import MANUAL_INPUT_DB_PATH
-from debenture_search.models import DebentureRef, SearchQuery
+from debenture_search.models import DebentureRef
 from debenture_search.providers.manual import ManualInputProvider
+from debenture_search.query_parsing import infer_query as _infer_query
 from debenture_search.serialization import debenture_to_dict
 
 app = typer.Typer(add_completion=False)
-
-_ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")  # heurística: formato ISO 6166
-_CODIGO_ATIVO_RE = re.compile(r"^[A-Z0-9]{4,8}$")
-
-
-def _infer_query(termo: str, tipo: str | None) -> SearchQuery:
-    termo_normalizado = termo.strip()
-    if tipo == "isin":
-        return SearchQuery(isin=termo_normalizado.upper())
-    if tipo == "codigo_ativo":
-        return SearchQuery(codigo_ativo=termo_normalizado.upper())
-    if tipo == "emissor":
-        return SearchQuery(nome_emissor=termo_normalizado)
-
-    upper = termo_normalizado.upper()
-    if _ISIN_RE.match(upper):
-        return SearchQuery(isin=upper)
-    if _CODIGO_ATIVO_RE.match(upper):
-        return SearchQuery(codigo_ativo=upper)
-    return SearchQuery(nome_emissor=termo_normalizado)
 
 
 @app.command()

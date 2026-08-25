@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Buscar debênture{% endblock %}
+{% block content %}
+<h1 style="margin-top:0">Buscar debênture</h1>
+<p class="hint">Digite o ISIN, o código do ativo (ex.: BODY12) ou o nome da empresa emissora.</p>
+<form class="search-box" action="/busca" method="get">
+  <input type="text" name="q" placeholder="ISIN, código do ativo ou nome da empresa" value="{{ q or '' }}" autofocus>
+  <button type="submit">Buscar</button>
+</form>
+<p class="hint">
+  Busca automática cobre estoque, situação, características e preços de negociação via SND — enquanto a fonte durar.
+  Dados que nenhuma fonte pública cobre (ex.: rating de agência) podem ser adicionados manualmente na ficha de cada ativo.
+</p>
+{% endblock %}

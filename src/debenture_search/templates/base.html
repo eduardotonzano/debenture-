@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Motor de Busca de Debêntures{% endblock %}</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e2e0da;
+    --text: #1f1d1a;
+    --muted: #6b6862;
+    --accent: #8a3324;
+    --accent-hover: #6f2a1c;
+    --badge-bg: #efece5;
+    --badge-text: #57534a;
+    --unavailable-bg: #f5efe8;
+    --unavailable-text: #9a8f7e;
+    --ok-bg: #eef1e8;
+    --ok-text: #4c5c3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 24px;
+  }
+  header a.brand {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    text-decoration: none;
+  }
+  header a.brand span { color: var(--accent); }
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+  .search-box {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  input[type="text"], select {
+    font-size: 15px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+  }
+  .search-box input[type="text"] {
+    flex: 1;
+  }
+  button, .btn {
+    font-size: 15px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  button:hover, .btn:hover { background: var(--accent-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .btn-secondary:hover { background: var(--unavailable-bg); }
+  .hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    margin: 0 0 14px;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px 24px;
+  }
+  .field label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 3px;
+  }
+  .field .valor {
+    font-size: 15px;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge-fonte { background: var(--ok-bg); color: var(--ok-text); }
+  .badge-indisponivel { background: var(--unavailable-bg); color: var(--unavailable-text); }
+  .valor.indisponivel { color: var(--unavailable-text); font-style: italic; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .empty-msg { color: var(--muted); font-style: italic; font-size: 14px; }
+  .lista-candidatos { list-style: none; padding: 0; margin: 0; }
+  .lista-candidatos li {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    background: var(--panel);
+  }
+  .lista-candidatos a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  .lista-candidatos a:hover { text-decoration: underline; }
+  .lista-candidatos .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  form.manual-form .campo {
+    margin-bottom: 14px;
+  }
+  form.manual-form label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  form.manual-form input, form.manual-form select {
+    width: 100%;
+  }
+  .flash {
+    background: var(--ok-bg);
+    color: var(--ok-text);
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 20px;
+    font-size: 14px;
+  }
+  .flash.erro {
+    background: var(--unavailable-bg);
+    color: var(--accent);
+  }
+  .ficha-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .ficha-header h1 {
+    margin: 0;
+    font-size: 24px;
+  }
+  .ficha-header .sub {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .toolbar {
+    margin-bottom: 20px;
+  }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 30px 20px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/">Debêntures<span>.busca</span></a>
+</header>
+<main>
+  {% if mensagem %}
+    <div class="flash {{ 'erro' if erro else '' }}">{{ mensagem }}</div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer>Uso interno — dados de fontes públicas, sempre com a fonte indicada. Nada aqui é recomendação de investimento.</footer>
+</body>
+</html>

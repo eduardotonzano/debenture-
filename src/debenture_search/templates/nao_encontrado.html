@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Nada encontrado — {{ q }}{% endblock %}
+{% block content %}
+<h1 style="margin-top:0">Nada encontrado para "{{ q }}"</h1>
+<p class="hint">
+  Nenhuma fonte automática encontrou esse ativo/emissor. Isso pode acontecer porque:
+</p>
+<ul class="hint">
+  <li>o SND não tem busca direta por ISIN sem saber o código do ativo antes;</li>
+  <li>o termo não corresponde a nenhum emissor cadastrado;</li>
+  <li>a fonte pode estar temporariamente indisponível.</li>
+</ul>
+<p><a class="btn" href="/">&larr; Tentar outra busca</a></p>
+{% endblock %}

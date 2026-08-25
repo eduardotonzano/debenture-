@@ -1,0 +1,12 @@
+{% macro campo(label, sv) %}
+<div class="field">
+  <label>{{ label }}</label>
+  <div class="valor {{ 'indisponivel' if not sv.disponivel else '' }}">
+    {%- if sv.disponivel -%}
+      {{ fmt(sv.valor) }}<span class="badge badge-fonte">{{ sv.fonte }}</span>
+    {%- else -%}
+      indisponível<span class="badge badge-indisponivel">sem fonte</span>
+    {%- endif -%}
+  </div>
+</div>
+{% endmacro %}

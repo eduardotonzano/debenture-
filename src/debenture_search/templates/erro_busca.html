@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Erro na busca — {{ q }}{% endblock %}
+{% block content %}
+<h1 style="margin-top:0">Não foi possível concluir a busca</h1>
+<p class="hint">A busca por "{{ q }}" falhou ao consultar as fontes automáticas:</p>
+<div class="flash erro">{{ erro_detalhe }}</div>
+<p class="hint">Nenhum dado foi inventado — a busca simplesmente não pôde ser concluída agora. Tente de novo em instantes.</p>
+<p><a class="btn" href="/">&larr; Tentar outra busca</a></p>
+{% endblock %}
