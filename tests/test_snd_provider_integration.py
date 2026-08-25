@@ -36,12 +36,22 @@ def _seed_cache(cache: SqliteCache) -> None:
         FONTE, "precos", "BODY12",
         (FIXTURES / "snd_precosdenegociacao_r.html").read_text(encoding="utf-8"),
     )
-    # Sempre seedado — fetch_characteristics também confere a lista de
-    # registros excluídos, e sem isso o teste tentaria rede de verdade.
+    # Sempre seedado — fetch_characteristics também confere as listas de
+    # registros excluídos e vencimentos antecipados, e fetch_events confere
+    # repactuações; sem isso os testes tentariam rede de verdade.
     mes_fim = datetime.utcnow().strftime("%m/%Y")
     cache.set(
         FONTE, "registros_excluidos", f"01/2000-{mes_fim}",
         (FIXTURES / "snd_registrosexcluidos_r.html").read_text(encoding="utf-8"),
+    )
+    hoje = datetime.utcnow().strftime("%d/%m/%Y")
+    cache.set(
+        FONTE, "vencimentos_antecipados", f"01/01/1995-{hoje}",
+        (FIXTURES / "snd_vencimentosantecipados_r.html").read_text(encoding="utf-8"),
+    )
+    cache.set(
+        FONTE, "repactuacoes", "global",
+        (FIXTURES / "snd_repactuacoes_r.html").read_text(encoding="utf-8"),
     )
 
 
@@ -106,6 +116,35 @@ def test_fetch_characteristics_ativo_nao_excluido_fica_indisponivel(tmp_path) ->
 
     assert resultado.sucesso
     assert resultado.valor.data_exclusao_registro.disponivel is False
+    assert resultado.valor.data_vencimento_antecipado.disponivel is False
+
+
+def test_fetch_events_retorna_repactuacoes_do_ativo(tmp_path) -> None:
+    cache = SqliteCache(tmp_path / "cache.sqlite3")
+    _seed_cache(cache)
+    provider = SndScraperProvider(cache=cache)
+    ref = DebentureRef(isin=None, codigo_ativo="BFBL34", nome_emissor="Dibens Leasing")
+
+    resultado = provider.fetch_events(ref)
+
+    assert resultado.sucesso
+    assert len(resultado.valor) == 7  # BFBL34 repactuou 7 vezes no fixture real
+    primeiro = resultado.valor[0]
+    assert primeiro.tipo.value == "repactuacao"
+    assert primeiro.data_prevista.isoformat() == "1995-11-01"
+    assert primeiro.valor.valor == "RCA - 16/10/1995"
+
+
+def test_fetch_events_ativo_sem_repactuacao_retorna_vazio(tmp_path) -> None:
+    cache = SqliteCache(tmp_path / "cache.sqlite3")
+    _seed_cache(cache)
+    provider = SndScraperProvider(cache=cache)
+    ref = DebentureRef(isin="BRBODYDBS000", codigo_ativo="BODY12", nome_emissor="A Bodytech")
+
+    resultado = provider.fetch_events(ref)
+
+    assert resultado.sucesso
+    assert resultado.valor == []
 
 
 def test_marcar_registro_excluido_preenche_data_e_motivo(tmp_path) -> None:

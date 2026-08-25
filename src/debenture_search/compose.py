@@ -26,4 +26,5 @@ def build_aggregator() -> DebentureAggregator:
         # quando presente). ANBIMA entra aqui na Fase 3, entre os dois.
         characteristics_providers=[snd, manual],
         market_data_providers=[snd],
+        events_providers=[snd],
     )

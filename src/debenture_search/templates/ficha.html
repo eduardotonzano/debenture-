@@ -10,6 +10,14 @@
   <a class="btn btn-secondary" href="/">&larr; Nova busca</a>
 </div>
 
+{% if deb.data_vencimento_antecipado.disponivel %}
+<div class="card-alerta">
+  <strong>Vencimento antecipado declarado</strong>
+  <p>Em {{ fmt(deb.data_vencimento_antecipado.valor) }}.</p>
+  <p class="hint" style="margin:6px 0 0">Fonte: {{ deb.data_vencimento_antecipado.fonte }}. Vencimento antecipado normalmente indica quebra de covenant ou evento de default — vale investigar o motivo antes de qualquer decisão.</p>
+</div>
+{% endif %}
+
 {% if deb.data_exclusao_registro.disponivel %}
 <div class="card-alerta">
   <strong>Registro excluído do SND</strong>
@@ -56,6 +64,7 @@
     {{ m.campo("Situação", deb.situacao) }}
     {{ m.campo("Motivo de saída", deb.motivo_saida) }}
     {{ m.campo("Data de exclusão do registro", deb.data_exclusao_registro) }}
+    {{ m.campo("Data de vencimento antecipado", deb.data_vencimento_antecipado) }}
   </div>
 </div>
 
@@ -109,20 +118,20 @@
   <h2>Eventos</h2>
   {% if deb.eventos %}
   <table>
-    <thead><tr><th>Tipo</th><th>Data prevista</th><th>Valor</th><th>Fonte</th></tr></thead>
+    <thead><tr><th>Tipo</th><th>Data</th><th>Deliberação</th><th>Fonte</th></tr></thead>
     <tbody>
-      {% for e in deb.eventos %}
+      {% for e in deb.eventos|sort(attribute="data_prevista", reverse=True) %}
       <tr>
-        <td>{{ e.tipo.value }}</td>
+        <td>{{ "Repactuação" if e.tipo.value == "repactuacao" else e.tipo.value }}</td>
         <td>{{ fmt(e.data_prevista) }}</td>
-        <td>{{ fmt(e.valor.valor) if e.valor.disponivel else "—" }}</td>
+        <td>{{ fmt(e.valor.valor) if e.valor.disponivel else "indisponível" }}</td>
         <td><span class="badge badge-fonte">{{ e.fonte or "—" }}</span></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p class="empty-msg">Nenhum evento futuro disponível.</p>
+  <p class="empty-msg">Nenhum evento disponível.</p>
   {% endif %}
 </div>
 

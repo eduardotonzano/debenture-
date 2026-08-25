@@ -121,7 +121,7 @@ def test_ficha_mostra_campos_disponiveis_e_indisponiveis() -> None:
     # rating não veio de nenhuma fonte nesse fake -> tem que aparecer como indisponível
     assert "indisponível" in r.text
     assert "Nenhum dado de negociação disponível" in r.text
-    assert "Nenhum evento futuro disponível" in r.text
+    assert "Nenhum evento disponível" in r.text
     assert "Nenhum documento disponível" in r.text
 
 

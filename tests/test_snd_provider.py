@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from debenture_search.models import DebentureRef
 from debenture_search.providers.snd import (
+    SndParsingError,
     _caracteristicas_encontrou_ativo,
     _extrair_cnpj_do_canonical,
     _parse_ativo_options,
@@ -24,6 +27,8 @@ from debenture_search.providers.snd import (
     _parse_emissor_options,
     _parse_precos_html,
     _parse_registros_excluidos_html,
+    _parse_repactuacoes_html,
+    _parse_vencimentos_antecipados_html,
     _pad_ativo,
 )
 
@@ -151,3 +156,42 @@ def test_parse_registros_excluidos_html() -> None:
 
     # ativo ativo (sem trocadilho) não deve aparecer na lista de excluídos
     assert not any(r[1] == "BODY12" for r in registros)
+
+
+def test_parse_repactuacoes_html() -> None:
+    html = (FIXTURES / "snd_repactuacoes_r.html").read_text(encoding="utf-8")
+    registros = _parse_repactuacoes_html(html)
+
+    assert len(registros) == 54  # histórico real, 1995-2010
+
+    data, codigo_ativo, emissor, deliberacao = registros[0]
+    assert data.isoformat() == "1995-11-01"
+    assert codigo_ativo == "BFBL34"
+    assert emissor == "DIBENS LEASING S/A ARRENDAMENTO MERCANTIL"
+    assert deliberacao == "RCA - 16/10/1995"
+
+    # linhas mais recentes do fixture não têm deliberação preenchida —
+    # dado real, o parser não deve inventar nem quebrar
+    sem_deliberacao = [r for r in registros if r[3] is None]
+    assert len(sem_deliberacao) > 0
+
+    # nome de emissor com " - " embutido não deve confundir o split do
+    # código de ativo (extraído do href, não do texto visível)
+    mend17 = next(r for r in registros if r[1] == "MEND17")
+    assert mend17[2] == "MENDES JUNIOR ENGENHARIA S/A"
+
+
+def test_parse_vencimentos_antecipados_html_sem_resultado() -> None:
+    """Única situação real confirmada até agora: nenhum vencimento
+    antecipado declarado no período consultado (2020-2026)."""
+    html = (FIXTURES / "snd_vencimentosantecipados_r.html").read_text(encoding="utf-8")
+    assert _parse_vencimentos_antecipados_html(html) == []
+
+
+def test_parse_vencimentos_antecipados_html_conteudo_desconhecido_falha_alto() -> None:
+    """Nunca vimos uma página de vencimentos antecipados COM resultado —
+    então, em vez de arriscar um parsing de linha nunca verificado, a
+    função levanta erro claro pra qualquer conteúdo que não seja o caso
+    vazio conhecido."""
+    with pytest.raises(SndParsingError):
+        _parse_vencimentos_antecipados_html("<html><body>algo diferente</body></html>")

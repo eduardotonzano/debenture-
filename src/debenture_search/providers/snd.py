@@ -47,9 +47,11 @@ from debenture_search.http_client import RateLimitedHttpClient
 from debenture_search.models import (
     Debenture,
     DebentureRef,
+    Event,
     MarketPriceSnapshot,
     SearchQuery,
     SourcedValue,
+    TipoEvento,
 )
 from debenture_search.providers.base import ProviderResult
 
@@ -78,6 +80,10 @@ class _Endpoints:
     )
     REGISTROS_EXCLUIDOS_RESULT = (
         f"{BASE}/consultaadados/emissoesdedebentures/registrosexcluidos_r.asp"
+    )
+    REPACTUACOES_RESULT = f"{BASE}/consultaadados/emissoesdedebentures/repactuacoes_r.asp"
+    VENCIMENTOS_ANTECIPADOS_RESULT = (
+        f"{BASE}/consultaadados/emissoesdedebentures/vencimentosantecipados_r.asp"
     )
 
 
@@ -146,6 +152,7 @@ class SndScraperProvider:
             html, _ = self._fetch_caracteristicas_html(codigo)
             debenture = _parse_caracteristicas_html(html, codigo_ativo=codigo.strip())
             self._marcar_registro_excluido(debenture, codigo)
+            self._marcar_vencimento_antecipado(debenture, codigo)
             return ProviderResult.ok(self.name, debenture)
         except SndNaoEncontrado:
             # Não é falha de fonte — o ativo genuinamente não está aqui.
@@ -188,6 +195,79 @@ class SndScraperProvider:
             data={"mes_ini": "01/2000", "mes_fim": mes_fim, "Submit3.x": "1", "Submit3.y": "1"},
         )
         return _parse_registros_excluidos_html(html)
+
+    def _marcar_vencimento_antecipado(self, debenture: Debenture, codigo: str) -> None:
+        """Confere se o ativo teve vencimento antecipado declarado — sinal
+        de problema ainda mais direto que registro excluído (normalmente
+        indica quebra de covenant ou evento de default). Só confiamos na
+        detecção de 'nenhum resultado' por enquanto — ver
+        _parse_vencimentos_antecipados_html e o README."""
+        try:
+            eventos = self._fetch_vencimentos_antecipados()
+        except Exception:  # noqa: BLE001
+            return
+        alvo = codigo.strip().upper()
+        for data_declaracao, codigo_ativo, _emissor in eventos:
+            if codigo_ativo.strip().upper() == alvo:
+                debenture.data_vencimento_antecipado = SourcedValue(
+                    data_declaracao, fonte=f"{FONTE} (Vencimentos Antecipados)"
+                )
+                return
+
+    def _fetch_vencimentos_antecipados(self) -> list[tuple[date, str, str]]:
+        """Lista GLOBAL de vencimentos antecipados declarados. `dt_ini` é
+        obrigatório no formulário real. Toda consulta feita até agora
+        (2020 em diante) voltou vazia — ver _parse_vencimentos_antecipados_html."""
+        hoje = datetime.utcnow().strftime("%d/%m/%Y")
+        html = self._post_cached_or_fetch(
+            "vencimentos_antecipados", f"01/01/1995-{hoje}",
+            _Endpoints.VENCIMENTOS_ANTECIPADOS_RESULT,
+            data={
+                "op_exc": "False", "emissor": "", "ativo": "",
+                "dt_ini": "01/01/1995", "dt_fim": hoje,
+                "Submit3.x": "1", "Submit3.y": "1",
+            },
+        )
+        return _parse_vencimentos_antecipados_html(html)
+
+    # -- EventsProvider ------------------------------------------------------
+
+    def fetch_events(self, ref: DebentureRef) -> ProviderResult[list[Event]]:
+        codigo = ref.codigo_ativo
+        if not codigo:
+            return ProviderResult.ok(self.name, [])
+        try:
+            repactuacoes = self._fetch_repactuacoes()
+        except Exception as exc:  # noqa: BLE001
+            return ProviderResult.falha(self.name, str(exc))
+        alvo = codigo.strip().upper()
+        eventos = [
+            Event(
+                debenture_ref=ref,
+                tipo=TipoEvento.REPACTUACAO,
+                data_prevista=data,
+                valor=SourcedValue(deliberacao, fonte=FONTE) if deliberacao else SourcedValue(None),
+                fonte=FONTE,
+            )
+            for data, codigo_ativo, _emissor, deliberacao in repactuacoes
+            if codigo_ativo.strip().upper() == alvo
+        ]
+        return ProviderResult.ok(self.name, eventos)
+
+    def _fetch_repactuacoes(self) -> list[tuple[date, str, str, str | None]]:
+        """Lista GLOBAL de repactuações históricas — busca uma única vez,
+        filtrada localmente por ativo. Campos em branco funcionaram na
+        consulta real (não exige dt_ini como as outras duas)."""
+        html = self._post_cached_or_fetch(
+            "repactuacoes", "global",
+            _Endpoints.REPACTUACOES_RESULT,
+            data={
+                "op_exc": "False", "emissor": "", "ativo": "",
+                "dt_ini": "", "dt_fim": "", "evento": "",
+                "Submit.x": "1", "Submit.y": "1",
+            },
+        )
+        return _parse_repactuacoes_html(html)
 
     def _fetch_caracteristicas_html(self, codigo: str) -> tuple[str, DebentureRef]:
         """Tenta tip_deb=publicas, depois privadas. Levanta SndNaoEncontrado
@@ -535,3 +615,54 @@ def _parse_registros_excluidos_html(html: str) -> list[tuple[date, str, str, str
             continue
         resultado.append((data_exclusao, codigo_ativo, emissor, motivo or None))
     return resultado
+
+
+# -- parsing: repactuacoes_r.asp --------------------------------------------
+
+_ATIVO_HREF_RE = re.compile(r"[?&]ativo=([A-Z0-9]+)")
+
+
+def _parse_repactuacoes_html(html: str) -> list[tuple[date, str, str, str | None]]:
+    """Lista global: Data de Repactuação | Ativo (link com o código na
+    querystring) | Emissor - Código | Deliberação. O código de ativo vem
+    da querystring do link, não do texto visível (que mistura emissor e
+    código com ' - ', e o nome do emissor às vezes já tem ' - ' dentro,
+    ex.: 'NOVONOR ENERGIA S.A - EM RECUPERACAO JUDICIAL')."""
+    soup = BeautifulSoup(html, "lxml")
+    resultado: list[tuple[date, str, str, str | None]] = []
+    for tr in soup.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) != 4:
+            continue
+        link = tds[0].find("a", href=_ATIVO_HREF_RE)
+        if link is None:
+            continue
+        m = _ATIVO_HREF_RE.search(link["href"])
+        codigo_ativo = m.group(1)
+        data_repactuacao = _parse_data_br(link.get_text(strip=True))
+        if data_repactuacao is None:
+            continue
+        emissor_e_codigo = tds[1].get_text(strip=True)
+        emissor = emissor_e_codigo.rsplit(f" - {codigo_ativo}", 1)[0]
+        deliberacao = tds[3].get_text(strip=True) or None
+        resultado.append((data_repactuacao, codigo_ativo, emissor, deliberacao))
+    return resultado
+
+
+# -- parsing: vencimentosantecipados_r.asp ----------------------------------
+
+
+def _parse_vencimentos_antecipados_html(html: str) -> list[tuple[date, str, str]]:
+    """STATUS: só a detecção de 'nenhum resultado' foi verificada contra
+    página real — toda consulta feita até agora (2020 em diante) voltou
+    vazia. Levanta SndParsingError se a página tiver conteúdo que não seja
+    esse caso vazio conhecido, em vez de arriscar um parsing de linha
+    nunca confirmado contra dado real. Ver README para o que falta."""
+    if "existe resposta para os itens selecionados" in html:
+        return []
+    raise SndParsingError(
+        "vencimentosantecipados_r.asp retornou conteúdo com possíveis "
+        "registros, mas o parsing de linhas populadas nunca foi validado "
+        "contra uma amostra real (toda consulta até agora voltou vazia) — "
+        "ver README, seção de páginas de alerta pendentes."
+    )

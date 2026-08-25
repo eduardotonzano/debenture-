@@ -59,11 +59,19 @@ O que está implementado e testado:
   da ficha. Quando bate, um banner de alerta aparece no topo da ficha,
   antes de qualquer outra seção — com a ressalva de que exclusão não
   significa necessariamente inadimplência (pode ser vencimento normal).
-  As outras três páginas do mesmo tipo que o SND expõe (Inadimplências,
-  Vencimentos Antecipados, Repactuações) ainda não têm captura de
-  resultado real — ficaram só no formulário, ver `tests/fixtures/` e a
-  seção abaixo.
-- 44 testes automatizados (parsing + integração dos providers + cache +
+- **Alerta de "Vencimento Antecipado Declarado"**: mesmo padrão, usando
+  `vencimentosantecipados_r.asp` (lista global). Sinal de problema mais
+  direto que registro excluído (normalmente indica quebra de covenant).
+  Só a detecção de "nenhum resultado" foi validada contra página real —
+  ver "Cobertura real do SND" abaixo pro que falta confirmar.
+- **Eventos de repactuação na ficha**: `EventsProvider` implementado
+  usando `repactuacoes_r.asp` (lista global, 54 registros reais de
+  1995-2010 na amostra capturada) — mostra tipo, data e deliberação
+  (ex.: "RCA - 16/10/1995") na seção Eventos da ficha, mais recente
+  primeiro.
+- **Inadimplências**: ainda não implementado — nenhuma submissão real
+  dessa página foi capturada (só o formulário). Ver seção abaixo.
+- 49 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -99,26 +107,29 @@ documentação oficial — o SND não expõe uma). O que está confirmado:
 - **"Não encontrado"**: a heurística usada (`_caracteristicas_encontrou_ativo`)
   não foi validada contra uma página real de "ativo não existe", porque não
   capturamos uma — está documentada como best-effort no código.
-- **Eventos futuros** (próxima repactuação/amortização): a página de
-  características tem esses dados brutos (tabela de amortização/prêmio),
-  mas o parsing para `EventsProvider` não foi implementado nesta fase —
-  fica pra quando isso for de fato necessário.
+- **Amortizações futuras**: a página de características tem esses dados
+  brutos (tabela de amortização/prêmio), mas o parsing pra virar `Event`
+  não foi implementado — só repactuação foi (ver acima).
+- **Vencimentos Antecipados — parsing de linha não verificado**: toda
+  consulta feita até agora (2020-2026, todos os emissores) voltou
+  "Não existe resposta para os itens selecionados." — real e útil (sabemos
+  que não houve nenhum no período), mas nunca vimos uma página desse
+  relatório COM resultado. `_parse_vencimentos_antecipados_html` levanta
+  `SndParsingError` de propósito se a página tiver conteúdo diferente
+  desse caso vazio conhecido, em vez de arriscar um parsing de coluna
+  nunca confirmado — então o alerta correspondente pode não funcionar
+  ainda quando (se) o caso real aparecer. Próximo passo: repetir a consulta
+  com um intervalo de datas mais antigo ou emissor específico até achar um
+  caso real, capturar o HAR, e então implementar o parsing de linha.
 
-### Páginas de "problema" ainda pendentes: Inadimplências, Vencimentos Antecipados, Repactuações
+### Página ainda pendente: Inadimplências
 
-O SND expõe mais três relatórios GLOBAIS no mesmo padrão de "Registros
-Excluídos" (formulário com `mes_ini`/`emissor`/`ativo` opcionais,
-resultado em `_r.asp`), mas nenhum teve uma submissão real capturada
-ainda — só o formulário (`tests/fixtures` não tem os `_r.asp` desses
-três). Provavelmente valem a mesma implementação (busca uma vez, cacheia,
-cruza localmente com o ativo da ficha), mas não dá pra confirmar a
-estrutura da tabela sem uma captura real. Próximo passo: repetir o
-processo de HAR já usado nas outras páginas, especificamente clicando
-"Enviar" em cada uma:
-
-- `inadimplencias_f.asp` (`inadimplencias_r.asp`)
-- `vencimentosantecipados_f.asp` (`vencimentosantecipados_r.asp`)
-- `repactuacoes_f.asp` (`repactuacoes_r.asp`)
+`inadimplencias_f.asp` existe e o formulário foi mapeado (mesmo padrão:
+`mes_ini`/`mes_fim`/`emissor`/`ativo` opcionais, resultado em
+`inadimplencias_r.asp`), mas nenhuma tentativa de envio foi capturada com
+sucesso ainda. Próximo passo: abrir a página, clicar "Enviar" (com data
+inicial se pedir, ex.: 01/01/2000) e capturar o HAR do resultado, mesmo
+processo já usado nas outras.
 
 ### Descontinuação anunciada do SND
 
