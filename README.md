@@ -69,9 +69,15 @@ O que está implementado e testado:
   1995-2010 na amostra capturada) — mostra tipo, data e deliberação
   (ex.: "RCA - 16/10/1995") na seção Eventos da ficha, mais recente
   primeiro.
-- **Inadimplências**: ainda não implementado — nenhuma submissão real
-  dessa página foi capturada (só o formulário). Ver seção abaixo.
-- 49 testes automatizados (parsing + integração dos providers + cache +
+- **Alerta de "Inadimplência Corrente"**: mesmo padrão, usando
+  `inadimplencias_r.asp` (lista global, só Ativo + Motivo, sem data — é
+  retrato do estado atual). É o sinal de problema mais direto de todos —
+  aparece primeiro entre os banners de alerta. Confirmado que o envio em
+  branco funciona sem exigir data (diferente das outras duas). Só a
+  detecção de "nenhum resultado" foi validada contra página real (não
+  havia nenhuma inadimplência corrente no momento da captura) — mesma
+  cautela de "Vencimentos Antecipados" pro parsing de linha populada.
+- 51 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -110,26 +116,17 @@ documentação oficial — o SND não expõe uma). O que está confirmado:
 - **Amortizações futuras**: a página de características tem esses dados
   brutos (tabela de amortização/prêmio), mas o parsing pra virar `Event`
   não foi implementado — só repactuação foi (ver acima).
-- **Vencimentos Antecipados — parsing de linha não verificado**: toda
-  consulta feita até agora (2020-2026, todos os emissores) voltou
-  "Não existe resposta para os itens selecionados." — real e útil (sabemos
-  que não houve nenhum no período), mas nunca vimos uma página desse
-  relatório COM resultado. `_parse_vencimentos_antecipados_html` levanta
-  `SndParsingError` de propósito se a página tiver conteúdo diferente
-  desse caso vazio conhecido, em vez de arriscar um parsing de coluna
-  nunca confirmado — então o alerta correspondente pode não funcionar
-  ainda quando (se) o caso real aparecer. Próximo passo: repetir a consulta
-  com um intervalo de datas mais antigo ou emissor específico até achar um
-  caso real, capturar o HAR, e então implementar o parsing de linha.
-
-### Página ainda pendente: Inadimplências
-
-`inadimplencias_f.asp` existe e o formulário foi mapeado (mesmo padrão:
-`mes_ini`/`mes_fim`/`emissor`/`ativo` opcionais, resultado em
-`inadimplencias_r.asp`), mas nenhuma tentativa de envio foi capturada com
-sucesso ainda. Próximo passo: abrir a página, clicar "Enviar" (com data
-inicial se pedir, ex.: 01/01/2000) e capturar o HAR do resultado, mesmo
-processo já usado nas outras.
+- **Vencimentos Antecipados e Inadimplências — parsing de linha
+  populada não verificado**: toda consulta feita até agora nas duas
+  páginas voltou "Não existe resposta para os itens selecionados." —
+  real e útil (sabemos que não há nenhum caso ativo hoje), mas nunca
+  vimos nenhuma das duas páginas COM um registro de verdade.
+  `_parse_vencimentos_antecipados_html` e `_parse_inadimplencias_html`
+  levantam `SndParsingError` de propósito se a página tiver conteúdo
+  diferente desse caso vazio conhecido, em vez de arriscar um parsing de
+  coluna nunca confirmado — então os alertas correspondentes podem não
+  funcionar quando (se) um caso real aparecer, até alguém capturar um HAR
+  com resultado populado e o parsing de linha ser implementado de fato.
 
 ### Descontinuação anunciada do SND
 

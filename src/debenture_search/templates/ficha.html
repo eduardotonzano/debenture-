@@ -10,6 +10,14 @@
   <a class="btn btn-secondary" href="/">&larr; Nova busca</a>
 </div>
 
+{% if deb.motivo_inadimplencia.disponivel %}
+<div class="card-alerta">
+  <strong>Inadimplência corrente</strong>
+  <p>{{ deb.motivo_inadimplencia.valor }}</p>
+  <p class="hint" style="margin:6px 0 0">Fonte: {{ deb.motivo_inadimplencia.fonte }}. Sinal de problema ativo — este é o alerta mais direto que o SND expõe.</p>
+</div>
+{% endif %}
+
 {% if deb.data_vencimento_antecipado.disponivel %}
 <div class="card-alerta">
   <strong>Vencimento antecipado declarado</strong>
@@ -65,6 +73,7 @@
     {{ m.campo("Motivo de saída", deb.motivo_saida) }}
     {{ m.campo("Data de exclusão do registro", deb.data_exclusao_registro) }}
     {{ m.campo("Data de vencimento antecipado", deb.data_vencimento_antecipado) }}
+    {{ m.campo("Inadimplência", deb.motivo_inadimplencia) }}
   </div>
 </div>
 

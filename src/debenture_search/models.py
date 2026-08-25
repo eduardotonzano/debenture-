@@ -159,6 +159,7 @@ class Debenture:
     motivo_saida: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     data_exclusao_registro: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     data_vencimento_antecipado: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    motivo_inadimplencia: SourcedValue = field(default_factory=lambda: SourcedValue(None))
 
     rating: SourcedValue = field(default_factory=lambda: SourcedValue(None))
 

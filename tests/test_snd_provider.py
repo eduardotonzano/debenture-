@@ -25,6 +25,7 @@ from debenture_search.providers.snd import (
     _parse_ativo_options,
     _parse_caracteristicas_html,
     _parse_emissor_options,
+    _parse_inadimplencias_html,
     _parse_precos_html,
     _parse_registros_excluidos_html,
     _parse_repactuacoes_html,
@@ -195,3 +196,15 @@ def test_parse_vencimentos_antecipados_html_conteudo_desconhecido_falha_alto() -
     vazio conhecido."""
     with pytest.raises(SndParsingError):
         _parse_vencimentos_antecipados_html("<html><body>algo diferente</body></html>")
+
+
+def test_parse_inadimplencias_html_sem_resultado() -> None:
+    """Única situação real confirmada até agora: nenhuma inadimplência
+    corrente no momento da captura."""
+    html = (FIXTURES / "snd_inadimplencias_r.html").read_text(encoding="utf-8")
+    assert _parse_inadimplencias_html(html) == []
+
+
+def test_parse_inadimplencias_html_conteudo_desconhecido_falha_alto() -> None:
+    with pytest.raises(SndParsingError):
+        _parse_inadimplencias_html("<html><body>algo diferente</body></html>")

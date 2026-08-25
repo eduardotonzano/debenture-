@@ -53,6 +53,10 @@ def _seed_cache(cache: SqliteCache) -> None:
         FONTE, "repactuacoes", "global",
         (FIXTURES / "snd_repactuacoes_r.html").read_text(encoding="utf-8"),
     )
+    cache.set(
+        FONTE, "inadimplencias", "global",
+        (FIXTURES / "snd_inadimplencias_r.html").read_text(encoding="utf-8"),
+    )
 
 
 def test_search_por_emissor_sem_rede(tmp_path) -> None:
@@ -117,6 +121,7 @@ def test_fetch_characteristics_ativo_nao_excluido_fica_indisponivel(tmp_path) ->
     assert resultado.sucesso
     assert resultado.valor.data_exclusao_registro.disponivel is False
     assert resultado.valor.data_vencimento_antecipado.disponivel is False
+    assert resultado.valor.motivo_inadimplencia.disponivel is False
 
 
 def test_fetch_events_retorna_repactuacoes_do_ativo(tmp_path) -> None:

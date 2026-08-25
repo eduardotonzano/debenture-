@@ -85,6 +85,7 @@ class _Endpoints:
     VENCIMENTOS_ANTECIPADOS_RESULT = (
         f"{BASE}/consultaadados/emissoesdedebentures/vencimentosantecipados_r.asp"
     )
+    INADIMPLENCIAS_RESULT = f"{BASE}/consultaadados/emissoesdedebentures/inadimplencias_r.asp"
 
 
 def _normalize(texto: str) -> str:
@@ -153,6 +154,7 @@ class SndScraperProvider:
             debenture = _parse_caracteristicas_html(html, codigo_ativo=codigo.strip())
             self._marcar_registro_excluido(debenture, codigo)
             self._marcar_vencimento_antecipado(debenture, codigo)
+            self._marcar_inadimplencia(debenture, codigo)
             return ProviderResult.ok(self.name, debenture)
         except SndNaoEncontrado:
             # Não é falha de fonte — o ativo genuinamente não está aqui.
@@ -229,6 +231,40 @@ class SndScraperProvider:
             },
         )
         return _parse_vencimentos_antecipados_html(html)
+
+    def _marcar_inadimplencia(self, debenture: Debenture, codigo: str) -> None:
+        """Confere se o ativo está na lista de Inadimplências correntes do
+        SND — o sinal de problema mais direto de todos (é literalmente
+        'este ativo está inadimplente agora'). Diferente das outras duas
+        listas, não tem data — é um retrato do estado atual, não um
+        histórico."""
+        try:
+            inadimplencias = self._fetch_inadimplencias()
+        except Exception:  # noqa: BLE001
+            return
+        alvo = codigo.strip().upper()
+        for codigo_ativo, motivo in inadimplencias:
+            if codigo_ativo.strip().upper() == alvo:
+                debenture.motivo_inadimplencia = SourcedValue(
+                    motivo or "Inadimplente (motivo não informado pela fonte)",
+                    fonte=f"{FONTE} (Inadimplências)",
+                )
+                return
+
+    def _fetch_inadimplencias(self) -> list[tuple[str, str | None]]:
+        """Lista GLOBAL de inadimplências correntes. Diferente das outras
+        duas, o envio em branco funcionou sem exigir data — confirmado
+        contra página real (retornou vazio: nenhuma inadimplência no
+        momento da captura)."""
+        html = self._post_cached_or_fetch(
+            "inadimplencias", "global",
+            _Endpoints.INADIMPLENCIAS_RESULT,
+            data={
+                "op_exc": "False", "emissor": "", "ativo": "",
+                "dt_ini": "", "dt_fim": "", "Submit.x": "1", "Submit.y": "1",
+            },
+        )
+        return _parse_inadimplencias_html(html)
 
     # -- EventsProvider ------------------------------------------------------
 
@@ -665,4 +701,24 @@ def _parse_vencimentos_antecipados_html(html: str) -> list[tuple[date, str, str]
         "registros, mas o parsing de linhas populadas nunca foi validado "
         "contra uma amostra real (toda consulta até agora voltou vazia) — "
         "ver README, seção de páginas de alerta pendentes."
+    )
+
+
+# -- parsing: inadimplencias_r.asp ------------------------------------------
+
+
+def _parse_inadimplencias_html(html: str) -> list[tuple[str, str | None]]:
+    """Lista GLOBAL de inadimplências correntes: cabeçalho confirmado como
+    Ativo (*) | Motivo, sem data — é um retrato do estado atual, não
+    histórico. Mesma cautela das outras duas: só confirmamos o caso vazio
+    ('Não existe resposta...') contra página real; nunca vimos uma
+    populada, então levantamos SndParsingError pra qualquer outro
+    conteúdo em vez de arriscar um parsing de linha nunca confirmado."""
+    if "existe resposta para os itens selecionados" in html:
+        return []
+    raise SndParsingError(
+        "inadimplencias_r.asp retornou conteúdo com possíveis registros, "
+        "mas o parsing de linha ainda não foi validado contra uma amostra "
+        "real com inadimplência de verdade (toda consulta até agora "
+        "voltou vazia) — ver README, seção de páginas de alerta pendentes."
     )
