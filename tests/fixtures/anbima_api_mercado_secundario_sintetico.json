@@ -1,0 +1,34 @@
+[
+  {
+    "codigo_ativo": "TEST12",
+    "emissor": "EMPRESA TESTE FIXTURE S.A.",
+    "grupo": "Grupo Teste",
+    "data_referencia": "2026-08-24",
+    "data_vencimento": "2030-01-15",
+    "percentual_taxa": "DI + 2.0000%",
+    "pu": 1048.987654,
+    "taxa_indicativa": 12.3456,
+    "taxa_compra": 12.30,
+    "taxa_venda": 12.40,
+    "desvio_padrao": 0.0123,
+    "duration": 2.85,
+    "val_min_intervalo": 12.10,
+    "val_max_intervalo": 12.60
+  },
+  {
+    "codigo_ativo": "OUTR11",
+    "emissor": "OUTRA EMPRESA FIXTURE LTDA.",
+    "grupo": "Grupo Teste",
+    "data_referencia": "2026-08-24",
+    "data_vencimento": "2028-05-10",
+    "percentual_taxa": "IPCA + 6.5000%",
+    "pu": 2200.5,
+    "taxa_indicativa": 7.89,
+    "taxa_compra": 7.80,
+    "taxa_venda": 7.95,
+    "desvio_padrao": 0.008,
+    "duration": 1.9,
+    "val_min_intervalo": 7.70,
+    "val_max_intervalo": 8.00
+  }
+]

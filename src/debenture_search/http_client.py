@@ -51,9 +51,15 @@ class RateLimitedHttpClient:
         self._throttle()
         return self._client.get(url, params=params, headers=headers)
 
-    def post(self, url: str, data: dict[str, str] | None = None) -> httpx.Response:
+    def post(
+        self,
+        url: str,
+        data: dict[str, str] | None = None,
+        json: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
         self._throttle()
-        return self._client.post(url, data=data)
+        return self._client.post(url, data=data, json=json, headers=headers)
 
     def close(self) -> None:
         self._client.close()

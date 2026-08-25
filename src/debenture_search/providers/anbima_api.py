@@ -1,137 +1,200 @@
-"""Provider da API oficial paga da ANBIMA ("ANBIMA Developers API").
+"""Provider da API oficial paga da ANBIMA ("ANBIMA Feed - Preços e Índices").
 
-STATUS: NÃO implementado contra a API real — o usuário ainda não tem
-credencial, e mesmo que tivesse, o domínio da documentação
-(`developers.anbima.com.br`, `api.anbima.com.br`) está bloqueado pela
-política de rede deste ambiente (mesmo bloqueio que afetou o SND e o
-ANBIMA Data — ver README). Este módulo é a contraparte oficial e paga
-daquele portal: diferente do ANBIMA Data público (que tem API interna
-protegida por reCAPTCHA e que decidimos, com o usuário, não automatizar —
-ver seção "Decisão" no README), esta é uma API comercial com contrato
-formal; não há problema em integrá-la quando a credencial existir.
+Contrato CONFIRMADO (não é mais placeholder) a partir de duas fontes reais
+do portal ANBIMA Developers, capturadas via HAR pelo próprio usuário:
 
-O que este arquivo é, hoje: a interface pronta pra plugar (`is_available()`
-retorna `False` sem `ANBIMA_API_KEY`, e o `DebentureAggregator` já ignora
-providers indisponíveis — ver `aggregator.py`), com TUDO que depende do
-contrato real da API (URL base, forma de autenticação, nomes de campo no
-JSON de resposta) marcado como placeholder e isolado em `_Endpoints` e nas
-funções `_parse_*`, exatamente como fizemos com o SND antes de termos
-acesso a HTML real (ver histórico do projeto).
+1. Página de texto "Autenticação"
+   (developers.anbima.com.br/pt/documentacao/visao-geral/autenticacao/):
 
-Quando a credencial existir, os passos são:
-  1. Abrir a documentação oficial da ANBIMA Developers API (fora deste
-     ambiente) e confirmar: URL base, forma de autenticação (a hipótese
-     aqui é passar a api_key direto como Bearer token — se a API real
-     exigir OAuth2 client_credentials, com troca prévia de
-     client_id/client_secret por um token de curta duração, é preciso
-     adicionar essa etapa antes da chamada em `fetch_characteristics`),
-     e o endpoint de características de debêntures.
-  2. Ajustar `_Endpoints` e o header de autenticação em
-     `fetch_characteristics`.
-  3. Substituir a fixture sintética em `tests/fixtures/anbima_api_*.json`
-     por uma resposta real (com dados sensíveis/de conta removidos) e
-     ajustar `_parse_caracteristicas_json` até os testes passarem com o
-     schema real.
+   Passo 1 — obter o access_token (OAuth2 client_credentials):
 
-O mapeamento de campos abaixo é uma HIPÓTESE razoável (inspirada na
-estrutura de dados que a ANBIMA usa no seu próprio site, observada
-incidentalmente durante a investigação do ANBIMA Data — não é o schema
-confirmado da API paga, que é um produto tecnicamente separado).
+       POST https://api.anbima.com.br/oauth/access-token
+       Content-Type: application/json
+       Authorization: Basic base64("<client_id>:<client_secret>")
+
+       {"grant_type": "client_credentials"}
+
+   Resposta:
+
+       {"access_token": "...", "token_type": "access_token", "expires_in": 3600}
+
+   `expires_in` é em segundos. Passado esse tempo o token expira e o passo
+   1 deve ser repetido.
+
+   Passo 2 — toda chamada de dado exige DOIS headers (não é
+   `Authorization: Bearer`, é um par de `apiKey` conforme o `securitySchemes`
+   do Swagger real):
+
+       client_id: <client_id>
+       access_token: <token obtido no passo 1>
+
+2. Swagger real ("Portal Swagger - ANBIMA Feed Preços & Índices",
+   documentacao/precos-indices/swagger-precos-e-indices/), spec OpenAPI
+   3.0.1 embutida na própria página:
+
+   - `servers`: produção `https://api.anbima.com.br/feed/precos-indices`,
+     sandbox `https://api-sandbox.anbima.com.br/feed/precos-indices`.
+     (A página de texto de Autenticação usa `api.sandbox.anbima.com.br`
+     com ponto, em vez de hífen — só o Swagger foi usado aqui porque é o
+     valor que a própria ANBIMA usa para montar as chamadas de teste; se
+     não bater na prática, é o primeiro lugar a conferir.)
+   - `GET /v1/debentures/mercado-secundario?data=YYYY-MM-DD`: parâmetro
+     `data` opcional (sem ele, retorna o dia mais recente disponível).
+     IMPORTANTE: não existe filtro por ativo/ISIN na própria API — o
+     endpoint devolve a lista inteira do dia (schema
+     `MercadoSecundarioDebenturesLista`), e o filtro pelo `codigo_ativo`
+     buscado é feito localmente neste módulo. Por isso a lista do dia é
+     cacheada em memória por instância: uma chamada de rede serve qualquer
+     busca feita no mesmo dia, em vez de uma chamada por busca.
+   - Cada item (`MercadoSecundarioDebentures`) é dado de PRECIFICAÇÃO de
+     mercado — `codigo_ativo`, `emissor`, `data_vencimento`, `pu`,
+     `taxa_indicativa`, `taxa_compra`, `taxa_venda`, `desvio_padrao`,
+     `duration`, `val_min_intervalo`, `val_max_intervalo`, `grupo`,
+     `data_referencia`, entre outros — não características de emissão.
+     Por isso este provider implementa `MarketDataProvider`, não
+     `CharacteristicsProvider` (diferente da versão anterior deste
+     arquivo, escrita antes de ter acesso ao contrato real).
+
+O que ainda NÃO foi confirmado por uma chamada real (o domínio da API está
+bloqueado no sandbox de desenvolvimento — mesma restrição que afetou
+SND/ANBIMA Data/CVM): o usuário tem credencial sandbox aprovada
+("Motor de Busca de Debêntures"), mas nunca foi possível efetivamente
+disparar a chamada a partir daqui. Rodar isso de verdade requer setar
+ANBIMA_CLIENT_ID/ANBIMA_CLIENT_SECRET localmente (nunca no repositório) e
+testar fora deste ambiente.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+import base64
+import time
+from datetime import date
+from threading import Lock
 
 from debenture_search.http_client import RateLimitedHttpClient
-from debenture_search.models import Debenture, DebentureRef, SourcedValue
+from debenture_search.models import DebentureRef, MarketPriceSnapshot, SourcedValue
 from debenture_search.providers.base import ProviderResult
 
-FONTE = "ANBIMA API"
+FONTE = "ANBIMA Feed Preços e Índices"
 
+_TOKEN_URL = "https://api.anbima.com.br/oauth/access-token"
+_BASE_URL_PRODUCAO = "https://api.anbima.com.br/feed/precos-indices"
+_BASE_URL_SANDBOX = "https://api-sandbox.anbima.com.br/feed/precos-indices"
+_RECURSO_MERCADO_SECUNDARIO = "/v1/debentures/mercado-secundario"
 
-class _Endpoints:
-    """TODO(confirmar): nenhuma destas URLs foi verificada contra a
-    documentação real — são hipóteses baseadas em padrões comuns de API
-    financeira B2B brasileira, a confirmar quando houver credencial."""
-
-    BASE = "https://api.anbima.com.br"
-    DEBENTURES_CARACTERISTICAS = f"{BASE}/feed/precos-indices/v1/titulos-privados/debentures"
+# Margem de segurança antes do vencimento real do token, pra nunca usar um
+# access_token no instante exato em que expira.
+_MARGEM_EXPIRACAO_SEGUNDOS = 60
 
 
 class AnbimaAPIProvider:
-    """Implementa CharacteristicsProvider. Fica indisponível (e o
-    aggregator a ignora) sem `api_key` configurada — nunca derruba o
-    resto do sistema."""
+    """MarketDataProvider contra a API paga oficial da ANBIMA.
+
+    Não implementa CharacteristicsProvider: o único endpoint de Debêntures
+    confirmado (`mercado-secundario`) não traz dado cadastral, só preço de
+    mercado — quem cobre características continua sendo o SND.
+    """
 
     name = FONTE
 
-    def __init__(self, api_key: str | None, http_client: RateLimitedHttpClient | None = None) -> None:
-        self._api_key = api_key
-        # API paga não precisa do rate limit conservador do scraping do
-        # SND — mas ainda vale não abrir requisições em paralelo.
-        self._http = http_client or RateLimitedHttpClient(min_interval_seconds=0.3)
+    def __init__(
+        self,
+        client_id: str | None,
+        client_secret: str | None,
+        ambiente: str = "sandbox",
+        http_client: RateLimitedHttpClient | None = None,
+    ) -> None:
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._base_url = _BASE_URL_PRODUCAO if ambiente == "producao" else _BASE_URL_SANDBOX
+        # Rate limit modesto: é uma API paga com contrato formal, não
+        # scraping de página pública — mas ainda assim não faz sentido
+        # martelar sem necessidade.
+        self._http = http_client or RateLimitedHttpClient(min_interval_seconds=0.5)
+        self._lock = Lock()
+        self._access_token: str | None = None
+        self._token_expira_monotonic: float = 0.0
+        self._lista_do_dia: list[dict] | None = None
+        self._lista_do_dia_capturada_em: date | None = None
 
     def is_available(self) -> bool:
-        return bool(self._api_key)
-
-    def fetch_characteristics(self, ref: DebentureRef) -> ProviderResult[Debenture]:
-        codigo = ref.codigo_ativo or ref.isin
-        if not codigo:
-            return ProviderResult.ok(self.name, Debenture())
-        try:
-            response = self._http.get(
-                _Endpoints.DEBENTURES_CARACTERISTICAS,
-                params={"codigo": codigo},  # TODO(confirmar): nome real do parâmetro de busca
-                # TODO(confirmar): forma real de autenticação — hipótese de
-                # Bearer token direto com a api_key; se a API real usar
-                # OAuth2 client_credentials (client_id + client_secret
-                # trocados por um token de curta duração), isso precisa de
-                # uma etapa de autenticação prévia antes desta chamada.
-                headers={"Authorization": f"Bearer {self._api_key}"},
-            )
-            response.raise_for_status()
-            debenture = _parse_caracteristicas_json(response.json())
-            return ProviderResult.ok(self.name, debenture)
-        except Exception as exc:  # noqa: BLE001
-            return ProviderResult.falha(self.name, str(exc))
+        return bool(self._client_id and self._client_secret)
 
     def close(self) -> None:
         self._http.close()
 
+    def _obter_access_token(self) -> str:
+        with self._lock:
+            if self._access_token and time.monotonic() < self._token_expira_monotonic:
+                return self._access_token
 
-def _parse_caracteristicas_json(payload: dict) -> Debenture:  # type: ignore[type-arg]
-    """TODO(confirmar): mapeamento de campos não verificado contra a API
-    paga real — ver docstring do módulo. `payload.get(...)` em vez de
-    acesso direto porque não sabemos ainda quais campos são garantidos."""
-    emissao = payload.get("emissao", {}) or {}
-    emissor = emissao.get("emissor", {}) or {}
-    indexador = payload.get("indexador", {}) or {}
+            credencial = f"{self._client_id}:{self._client_secret}".encode("utf-8")
+            auth_basic = base64.b64encode(credencial).decode("ascii")
 
-    return Debenture(
-        isin=SourcedValue(payload.get("isin"), fonte=FONTE),
-        codigo_ativo=SourcedValue(payload.get("codigo_b3"), fonte=FONTE),
-        emissor_nome=SourcedValue(emissor.get("nome"), fonte=FONTE),
-        emissor_cnpj=SourcedValue(emissor.get("cnpj"), fonte=FONTE),
-        numero_emissao=SourcedValue(emissao.get("numero_emissao"), fonte=FONTE),
-        numero_serie=SourcedValue(payload.get("numero_serie"), fonte=FONTE),
-        indexador=SourcedValue(indexador.get("nome"), fonte=FONTE),
-        taxa=SourcedValue(payload.get("remuneracao"), fonte=FONTE),
-        data_emissao=SourcedValue(_parse_data_iso(emissao.get("data_emissao")), fonte=FONTE),
-        data_vencimento=SourcedValue(_parse_data_iso(payload.get("data_vencimento")), fonte=FONTE),
-        especie=SourcedValue(emissao.get("garantia"), fonte=FONTE),
-        classe=SourcedValue(payload.get("classe"), fonte=FONTE),
-        quantidade_emitida=SourcedValue(emissao.get("quantidade_emitida"), fonte=FONTE),
-        quantidade_mercado=SourcedValue(payload.get("quantidade_mercado"), fonte=FONTE),
-        valor_nominal_unitario=SourcedValue(payload.get("valor_nominal_atual"), fonte=FONTE),
-        preco_indicativo=SourcedValue(payload.get("preco_indicativo"), fonte=FONTE),
+            resposta = self._http.post(
+                _TOKEN_URL,
+                json={"grant_type": "client_credentials"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Basic {auth_basic}",
+                },
+            )
+            resposta.raise_for_status()
+            payload = resposta.json()
+
+            token = payload["access_token"]
+            expira_em_segundos = payload.get("expires_in", 3600)
+            self._access_token = token
+            self._token_expira_monotonic = time.monotonic() + max(
+                expira_em_segundos - _MARGEM_EXPIRACAO_SEGUNDOS, 0
+            )
+            return token
+
+    def _obter_lista_mercado_secundario_do_dia(self) -> list[dict]:
+        hoje = date.today()
+        if self._lista_do_dia is not None and self._lista_do_dia_capturada_em == hoje:
+            return self._lista_do_dia
+
+        token = self._obter_access_token()
+        resposta = self._http.get(
+            f"{self._base_url}{_RECURSO_MERCADO_SECUNDARIO}",
+            headers={"client_id": self._client_id or "", "access_token": token},
+        )
+        resposta.raise_for_status()
+        lista = resposta.json()
+
+        self._lista_do_dia = lista
+        self._lista_do_dia_capturada_em = hoje
+        return lista
+
+    def fetch_market_data(self, ref: DebentureRef) -> ProviderResult[list[MarketPriceSnapshot]]:
+        codigo = ref.codigo_ativo
+        if not codigo:
+            # A API só permite filtrar localmente por codigo_ativo — sem
+            # ele (busca só por ISIN ou nome) não há como casar o item da
+            # lista do dia com a referência buscada.
+            return ProviderResult.ok(self.name, [])
+
+        try:
+            lista = self._obter_lista_mercado_secundario_do_dia()
+        except Exception as exc:
+            return ProviderResult.falha(self.name, str(exc))
+
+        itens_do_ativo = [item for item in lista if item.get("codigo_ativo") == codigo]
+        snapshots = [_parse_snapshot(ref, item) for item in itens_do_ativo]
+        return ProviderResult.ok(self.name, snapshots)
+
+
+def _parse_snapshot(ref: DebentureRef, item: dict) -> MarketPriceSnapshot:
+    data_referencia = item.get("data_referencia")
+    fonte = f"{FONTE} (ref. {data_referencia})" if data_referencia else FONTE
+    return MarketPriceSnapshot(
+        debenture_ref=ref,
+        periodo_referencia=data_referencia,
+        # A API dá um único PU indicativo por dia, não min/médio/máximo de
+        # negociações reais (isso é o SND) — mapeado em pu_medio por ser o
+        # campo mais próximo semanticamente; min/máximo ficam indisponíveis
+        # de propósito, nunca inventados a partir do único valor que existe.
+        pu_medio=SourcedValue(item.get("pu"), fonte=fonte),
+        taxa_indicativa=SourcedValue(item.get("taxa_indicativa"), fonte=fonte),
     )
-
-
-def _parse_data_iso(raw: str | None) -> date | None:
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw, "%Y-%m-%d").date()
-    except ValueError:
-        return None

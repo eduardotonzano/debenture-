@@ -95,6 +95,9 @@ class MarketPriceSnapshot:
     pu_maximo: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     quantidade_negociada: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     numero_negocios: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    # Taxa indicativa de mercado (ex.: marcação ANBIMA) — diferente da taxa
+    # contratual (indexador + spread) já coberta por Debenture.taxa.
+    taxa_indicativa: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     coletado_em: datetime | None = None
 
 
@@ -154,7 +157,6 @@ class Debenture:
     quantidade_emitida: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     quantidade_mercado: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     valor_nominal_unitario: SourcedValue = field(default_factory=lambda: SourcedValue(None))
-    preco_indicativo: SourcedValue = field(default_factory=lambda: SourcedValue(None))
 
     situacao: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     motivo_saida: SourcedValue = field(default_factory=lambda: SourcedValue(None))

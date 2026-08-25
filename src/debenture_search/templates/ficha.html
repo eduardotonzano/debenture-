@@ -62,7 +62,6 @@
     {{ m.campo("Quantidade emitida", deb.quantidade_emitida) }}
     {{ m.campo("Quantidade em mercado", deb.quantidade_mercado) }}
     {{ m.campo("Valor nominal unitário", deb.valor_nominal_unitario) }}
-    {{ m.campo("Preço indicativo", deb.preco_indicativo) }}
     {{ m.campo("Rating", deb.rating) }}
   </div>
 </div>
@@ -99,6 +98,7 @@
     <thead>
       <tr>
         <th>Data</th><th>PU mínimo</th><th>PU médio</th><th>PU máximo</th>
+        <th>Taxa indicativa</th>
         <th>Qtd. negociada</th><th>Nº negócios</th><th>Fonte</th>
       </tr>
     </thead>
@@ -109,6 +109,7 @@
         <td>{{ fmt(p.pu_minimo.valor) if p.pu_minimo.disponivel else "—" }}</td>
         <td>{{ fmt(p.pu_medio.valor) if p.pu_medio.disponivel else "—" }}</td>
         <td>{{ fmt(p.pu_maximo.valor) if p.pu_maximo.disponivel else "—" }}</td>
+        <td>{{ fmt(p.taxa_indicativa.valor) if p.taxa_indicativa.disponivel else "—" }}</td>
         <td>{{ fmt(p.quantidade_negociada.valor) if p.quantidade_negociada.disponivel else "—" }}</td>
         <td>{{ fmt(p.numero_negocios.valor) if p.numero_negocios.disponivel else "—" }}</td>
         <td><span class="badge badge-fonte">{{ p.pu_medio.fonte or "—" }}</span></td>

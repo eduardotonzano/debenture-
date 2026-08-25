@@ -77,19 +77,30 @@ O que está implementado e testado:
   detecção de "nenhum resultado" foi validada contra página real (não
   havia nenhuma inadimplência corrente no momento da captura) — mesma
   cautela de "Vencimentos Antecipados" pro parsing de linha populada.
-- **`AnbimaAPIProvider`** (Fase 3): interface completa, pluggável via
-  `ANBIMA_API_KEY` — sem a env var, `is_available()` retorna `False` e o
-  aggregator a ignora automaticamente (confirmado: `characteristics_providers`
-  vira `['SND', 'Manual']` sem a chave, `['SND', 'ANBIMA API', 'Manual']`
-  com ela). Precedência: SND (base gratuita) < ANBIMA API (mais completa,
-  quando disponível) < Manual (override do analista, sempre vence).
-  **Usuário ainda não tem credencial** — o contrato real da API (URL base,
-  autenticação, schema de resposta) não pôde ser confirmado (domínio
-  bloqueado neste ambiente, igual ao SND/ANBIMA Data). Tudo isso está
-  isolado e marcado `TODO(confirmar)` em `providers/anbima_api.py`, pronto
-  pra ajustar quando a credencial existir — ver docstring do módulo pro
-  passo a passo. Novo campo `preco_indicativo` no modelo e na ficha.
-- 56 testes automatizados (parsing + integração dos providers + cache +
+- **`AnbimaAPIProvider`** (Fase 3, contrato real confirmado): implementa
+  `MarketDataProvider`, não `CharacteristicsProvider` — o único endpoint de
+  Debêntures documentado no Swagger real (`/v1/debentures/mercado-secundario`)
+  devolve preço/taxa de mercado, não dado cadastral, então quem cobre
+  características continua sendo só o SND. Plugável via `ANBIMA_CLIENT_ID`
+  + `ANBIMA_CLIENT_SECRET` (e `ANBIMA_AMBIENTE`, padrão `sandbox`) — sem
+  as duas env vars, `is_available()` retorna `False` e o aggregator ignora
+  a fonte automaticamente. Fluxo de autenticação (OAuth2
+  `client_credentials`: `POST /oauth/access-token` com
+  `Authorization: Basic base64(client_id:client_secret)`, depois todo
+  request de dado exige os headers `client_id` e `access_token`) e a URL
+  do endpoint vêm confirmados de duas páginas reais do portal ANBIMA
+  Developers (documentação de Autenticação + Swagger com a spec OpenAPI
+  completa embutida), capturadas via HAR pelo usuário — não é mais
+  placeholder. O que falta: `/v1/debentures/mercado-secundario` não filtra
+  por ativo/ISIN, só devolve a lista inteira do dia (o filtro pelo
+  `codigo_ativo` buscado é feito localmente, com a lista cacheada em
+  memória por dia); e nenhuma chamada real chegou a ser feita — o domínio
+  da API segue bloqueado neste ambiente de desenvolvimento, então o
+  usuário precisa testar com a credencial sandbox aprovada
+  (`ANBIMA_CLIENT_ID`/`ANBIMA_CLIENT_SECRET`, **nunca commitadas**) rodando
+  localmente, fora deste sandbox. Novo campo `taxa_indicativa` em
+  `MarketPriceSnapshot`, exibido na tabela de Mercado Secundário da ficha.
+- 61 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -196,6 +207,12 @@ python3 -m venv .venv
 
 # Subir a UI web (http://127.0.0.1:8000)
 .venv/bin/uvicorn debenture_search.web:app --reload
+
+# Opcional: ligar a fonte ANBIMA Feed (preço/taxa indicativa de mercado).
+# Sem essas duas env vars a fonte fica desligada e o resto funciona igual.
+# NUNCA commitar valores reais — exportar só localmente.
+export ANBIMA_CLIENT_ID="..."
+export ANBIMA_CLIENT_SECRET="..."
 ```
 
 Por padrão os dados locais (cache e overrides manuais) ficam em
@@ -211,13 +228,15 @@ Por padrão os dados locais (cache e overrides manuais) ficam em
    desambiguação, tela de input manual. Validada com Playwright contra o
    fluxo real (busca → ficha → adicionar dado manual → desambiguação →
    nada encontrado).
-3. **Fase 3 (concluída — estrutura pronta, aguardando credencial)** —
-   `AnbimaAPIProvider` (características completas + preço indicativo),
-   plugável via `ANBIMA_API_KEY`; sem ela, a fonte fica desligada sem
-   quebrar o resto do sistema (confirmado por teste). Contrato real da
-   API (URL, autenticação, schema) ainda não confirmado — usuário não tem
-   credencial ainda; ver `providers/anbima_api.py` para o que falta
-   ajustar quando ela existir.
+3. **Fase 3 (concluída — contrato real confirmado, execução pendente de
+   teste fora deste ambiente)** — `AnbimaAPIProvider` (preço/taxa
+   indicativa de mercado via `/v1/debentures/mercado-secundario`),
+   plugável via `ANBIMA_CLIENT_ID`/`ANBIMA_CLIENT_SECRET`; sem eles, a
+   fonte fica desligada sem quebrar o resto do sistema (confirmado por
+   teste). Autenticação, URL e schema de resposta confirmados a partir da
+   documentação e do Swagger reais do portal ANBIMA Developers; falta
+   apenas uma chamada real (domínio bloqueado neste ambiente) — ver
+   `providers/anbima_api.py` para o contrato completo.
 4. **Fase 4** — `CvmDocumentsProvider` (prospecto, escritura, fatos
    relevantes), complementar/opcional.
 5. **Fase 5 (opcional)** — exportação da ficha, histórico de buscas,

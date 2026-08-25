@@ -1,64 +1,213 @@
-"""Testa o AnbimaAPIProvider — SEM rede, e sem uma amostra real de resposta
-da API paga (o usuário não tem credencial ainda). A fixture usada aqui
-(`anbima_api_caracteristicas_sintetico.json`) é sintética — escrita à mão
-como hipótese de schema, não confirmada contra a API real. Ver aviso no
-topo do arquivo e docstring de providers/anbima_api.py.
+"""Testa o AnbimaAPIProvider — sem rede, usando um http_client falso.
 
-Esses testes provam que a lógica de merge/parsing funciona estruturalmente
-e que a fonte fica corretamente desligada sem credencial — não provam que
-o schema bate com a API real, o que só pode ser confirmado quando houver
-acesso.
+O fluxo de autenticação (Basic auth em base64 -> access_token) e o formato
+da URL/headers de dado vêm confirmados de fontes reais do portal ANBIMA
+Developers (página de texto "Autenticação" + Swagger real), capturadas via
+HAR pelo usuário — ver docstring de providers/anbima_api.py. O que ainda
+não foi confirmado é o conteúdo de uma resposta real do endpoint de
+mercado secundário (o domínio está bloqueado neste ambiente de
+desenvolvimento) — por isso a fixture
+`anbima_api_mercado_secundario_sintetico.json` usa nomes/tipos de campo
+reais do schema, mas valores inventados.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
 from debenture_search.models import DebentureRef
-from debenture_search.providers.anbima_api import AnbimaAPIProvider, _parse_caracteristicas_json
+from debenture_search.providers.anbima_api import AnbimaAPIProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_indisponivel_sem_api_key() -> None:
-    provider = AnbimaAPIProvider(api_key=None)
+class _FakeResponse:
+    def __init__(self, payload: object, status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"status {self.status_code}")
+
+    def json(self) -> object:
+        return self._payload
+
+
+class _FakeHttpClient:
+    def __init__(self, token_payload: dict, lista_payload: object) -> None:
+        self._token_payload = token_payload
+        self._lista_payload = lista_payload
+        self.chamadas_post: list[dict] = []
+        self.chamadas_get: list[dict] = []
+
+    def post(self, url, data=None, json=None, headers=None):  # noqa: A002 (nome do parâmetro segue http_client real)
+        self.chamadas_post.append({"url": url, "json": json, "headers": headers})
+        return _FakeResponse(self._token_payload)
+
+    def get(self, url, params=None, headers=None):
+        self.chamadas_get.append({"url": url, "params": params, "headers": headers})
+        return _FakeResponse(self._lista_payload)
+
+    def close(self) -> None:
+        pass
+
+
+def _lista_sintetica() -> list[dict]:
+    return json.loads(
+        (FIXTURES / "anbima_api_mercado_secundario_sintetico.json").read_text(encoding="utf-8")
+    )
+
+
+def _provider(fake_http: _FakeHttpClient) -> AnbimaAPIProvider:
+    return AnbimaAPIProvider(
+        client_id="client-teste",
+        client_secret="secret-teste",
+        http_client=fake_http,
+    )
+
+
+def test_indisponivel_sem_credencial() -> None:
+    provider = AnbimaAPIProvider(client_id=None, client_secret=None)
     assert provider.is_available() is False
 
 
-def test_disponivel_com_api_key() -> None:
-    provider = AnbimaAPIProvider(api_key="qualquer-coisa")
+def test_indisponivel_com_credencial_parcial() -> None:
+    assert AnbimaAPIProvider(client_id="x", client_secret=None).is_available() is False
+    assert AnbimaAPIProvider(client_id=None, client_secret="y").is_available() is False
+
+
+def test_disponivel_com_credencial_completa() -> None:
+    provider = AnbimaAPIProvider(client_id="x", client_secret="y")
     assert provider.is_available() is True
 
 
-def test_parse_caracteristicas_json_fixture_sintetica() -> None:
-    payload = json.loads(
-        (FIXTURES / "anbima_api_caracteristicas_sintetico.json").read_text(encoding="utf-8")
+def test_token_usa_basic_auth_e_grant_type_client_credentials() -> None:
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-123", "token_type": "access_token", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),
     )
-    deb = _parse_caracteristicas_json(payload)
+    provider = _provider(fake_http)
 
-    assert deb.isin.valor == "BRTESTDBS001"
-    assert deb.codigo_ativo.valor == "TEST12"
-    assert deb.emissor_nome.valor == "EMPRESA TESTE FIXTURE S.A."
-    assert deb.emissor_cnpj.valor == "00000000000191"
-    assert deb.indexador.valor == "DI"
-    assert deb.taxa.valor == "DI + 2.0000%"
-    assert deb.data_emissao.valor.isoformat() == "2020-01-15"
-    assert deb.data_vencimento.valor.isoformat() == "2030-01-15"
-    assert deb.especie.valor == "Quirografária"
-    assert deb.preco_indicativo.valor == "1048.987654"
-    for campo in (deb.isin, deb.codigo_ativo, deb.emissor_nome, deb.indexador, deb.taxa):
-        assert campo.fonte == "ANBIMA API"
+    resultado = provider.fetch_market_data(
+        DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor="")
+    )
 
-
-def test_parse_caracteristicas_json_campos_ausentes_ficam_indisponiveis() -> None:
-    deb = _parse_caracteristicas_json({})
-    assert deb.isin.disponivel is False
-    assert deb.preco_indicativo.disponivel is False
-
-
-def test_fetch_characteristics_sem_ref_valida_nao_falha() -> None:
-    provider = AnbimaAPIProvider(api_key="qualquer-coisa")
-    resultado = provider.fetch_characteristics(DebentureRef(isin=None, codigo_ativo=None, nome_emissor=""))
     assert resultado.sucesso
-    assert resultado.valor.isin.disponivel is False
+    assert len(fake_http.chamadas_post) == 1
+    chamada = fake_http.chamadas_post[0]
+    assert chamada["url"] == "https://api.anbima.com.br/oauth/access-token"
+    assert chamada["json"] == {"grant_type": "client_credentials"}
+    esperado_basic = base64.b64encode(b"client-teste:secret-teste").decode("ascii")
+    assert chamada["headers"]["Authorization"] == f"Basic {esperado_basic}"
+    assert chamada["headers"]["Content-Type"] == "application/json"
+
+
+def test_chamada_de_dados_usa_headers_client_id_e_access_token() -> None:
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-abc", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),
+    )
+    provider = _provider(fake_http)
+
+    provider.fetch_market_data(DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor=""))
+
+    assert len(fake_http.chamadas_get) == 1
+    chamada = fake_http.chamadas_get[0]
+    assert chamada["url"].endswith("/v1/debentures/mercado-secundario")
+    assert chamada["headers"] == {"client_id": "client-teste", "access_token": "tok-abc"}
+
+
+def test_fetch_market_data_filtra_pelo_codigo_ativo_buscado() -> None:
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-abc", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),
+    )
+    provider = _provider(fake_http)
+
+    resultado = provider.fetch_market_data(
+        DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor="")
+    )
+
+    assert resultado.sucesso
+    assert len(resultado.valor) == 1
+    snapshot = resultado.valor[0]
+    assert snapshot.pu_medio.valor == 1048.987654
+    assert snapshot.taxa_indicativa.valor == 12.3456
+    assert snapshot.periodo_referencia == "2026-08-24"
+    assert "2026-08-24" in snapshot.pu_medio.fonte
+    # min/máximo não existem na resposta da ANBIMA (só um PU indicativo por
+    # dia) — nunca devem ser inventados a partir do único valor disponível.
+    assert snapshot.pu_minimo.disponivel is False
+    assert snapshot.pu_maximo.disponivel is False
+
+
+def test_fetch_market_data_sem_codigo_ativo_nao_bate_rede() -> None:
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-abc", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),
+    )
+    provider = _provider(fake_http)
+
+    resultado = provider.fetch_market_data(
+        DebentureRef(isin="BRTESTDBS001", codigo_ativo=None, nome_emissor="")
+    )
+
+    assert resultado.sucesso
+    assert resultado.valor == []
+    assert fake_http.chamadas_get == []
+    assert fake_http.chamadas_post == []
+
+
+def test_reutiliza_lista_do_dia_e_token_entre_buscas() -> None:
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-abc", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),
+    )
+    provider = _provider(fake_http)
+
+    provider.fetch_market_data(DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor=""))
+    provider.fetch_market_data(DebentureRef(isin=None, codigo_ativo="OUTR11", nome_emissor=""))
+
+    assert len(fake_http.chamadas_post) == 1
+    assert len(fake_http.chamadas_get) == 1
+
+
+def test_token_expirado_dispara_nova_chamada_de_token() -> None:
+    # Testado direto em _obter_access_token: via fetch_market_data o cache
+    # da lista do dia evitaria qualquer nova chamada de rede (nem chegaria
+    # a checar o token de novo), então isso teria que ser um teste do
+    # comportamento de token isoladamente.
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-abc", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),
+    )
+    provider = _provider(fake_http)
+
+    provider._obter_access_token()
+    provider._token_expira_monotonic = 0.0  # força expiração
+    provider._obter_access_token()
+
+    assert len(fake_http.chamadas_post) == 2
+
+
+def test_falha_de_rede_vira_resultado_falho_sem_excecao() -> None:
+    class _HttpQueFalha:
+        def post(self, *args, **kwargs):
+            raise RuntimeError("rede indisponível")
+
+        def close(self) -> None:
+            pass
+
+    provider = AnbimaAPIProvider(
+        client_id="client-teste", client_secret="secret-teste", http_client=_HttpQueFalha()
+    )
+
+    resultado = provider.fetch_market_data(
+        DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor="")
+    )
+
+    assert resultado.sucesso is False
+    assert "rede indisponível" in resultado.erro
