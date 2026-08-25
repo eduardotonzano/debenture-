@@ -1,38 +1,43 @@
-"""Provider do SND (debentures.com.br) — estoque, situação e mercado secundário.
+"""Provider do SND (debentures.com.br) — estoque, situação, mercado secundário
+e (enquanto durar) características completas.
 
-STATUS: stub estruturado, NÃO verificado contra o site real.
+STATUS: parsing verificado contra HTML real, capturado via HAR pelo usuário
+em 25/08/2026 (ver tests/fixtures/snd_*.html). Fluxo real do site,
+mapeado a partir do tráfego de rede:
 
-Este ambiente de desenvolvimento tem o egress de rede bloqueado para
-debentures.com.br (política do ambiente remoto), então não foi possível
-abrir as páginas reais para confirmar:
+  1. `estoqueporativo_f.asp` (sem parâmetros) embute um <select name="emissor">
+     ESTÁTICO com todos os ~1.466 emissores do SND (nome -> CNPJ). Isso é
+     baixado e cacheado uma única vez — a busca por nome de emissor é feita
+     localmente sobre essa lista, não bate no servidor a cada busca.
+  2. `estoqueporativo_f.asp?emissor=<CNPJ>&op_exc=` retorna o mesmo formulário
+     com um <select name="ativo"> populado só com os ativos daquele emissor.
+  3. `caracteristicas_d.asp?tip_deb={publicas|privadas}&selecao=<código>` é a
+     melhor rota: busca DIRETA por código de ativo, sem precisar resolver o
+     emissor antes, e retorna uma ficha completa (ISIN, situação, indexador,
+     spread, garantia, classe, quantidades, valor nominal, agentes,
+     classificação de risco quando houver). Confirmado que NÃO redireciona
+     para o ANBIMA Data (só tem um <link rel="canonical"> apontando pra lá,
+     que é inofensivo — é só um dado de SEO, não é seguido pelo navegador).
+  4. `precosdenegociacao_r.asp` (POST) retorna o histórico de PU mín/médio/
+     máx e quantidade negociada. Exige o CNPJ do emissor no payload — como
+     `caracteristicas_d.asp` embute esse CNPJ no `<link rel="canonical">`,
+     extraímos de lá em vez de fazer o usuário resolver o emissor de novo.
 
-  1. As URLs exatas das páginas de "Estoque por Ativo" e "Preços de
-     Negociação" dentro de /exploreosnd/consultaadados/mercadosecundario/.
-  2. Se a busca é GET ou POST, e os nomes exatos dos campos de formulário
-     (ex.: o parâmetro de ISIN pode se chamar "isin", "cod_isin",
-     "emissor" etc. — não adivinhei um nome específico onde importava).
-  3. A estrutura HTML das tabelas de resultado (ids/classes CSS, ordem das
-     colunas) para extrair estoque, situação e PU mín/médio/máx.
-
-Em vez de adivinhar esses detalhes e arriscar um scraper que parece
-funcionar mas extrai o campo errado silenciosamente, este módulo:
-
-  - Centraliza tudo que precisa ser confirmado em `_Endpoints` e nas
-    funções `_parse_*`, isoladas e testáveis com HTML de exemplo.
-  - Falha alto e claro (`SndParsingError`) quando um seletor esperado não
-    é encontrado, em vez de retornar um valor parcial/errado.
-  - Já implementa corretamente a parte que NÃO depende da estrutura da
-    página: rate limiting, cache, contrato com o restante do sistema
-    (Protocols de `providers.base`).
-
-Próximo passo (fora deste ambiente, onde há acesso à internet): rodar
-`scripts/capture_snd_fixtures.py` (a criar) ou salvar manualmente o HTML de
-uma busca real por ISIN/código de ativo em `tests/fixtures/`, então ajustar
-`_Endpoints` e os seletores em `_parse_estoque_html` / `_parse_precos_html`
-até os testes em `tests/test_snd_provider.py` passarem com dados reais.
+O que ainda é incerto (marcado com TODO(verificar) no código):
+  - Se `selecao=` em `caracteristicas_d.asp` aceita ISIN além de código de
+    ativo — só testamos com código de ativo.
+  - Se existe alguma forma de busca "global" por ISIN/código sem passar por
+    emissor ou por esse endpoint de detalhe — não encontramos uma no
+    tráfego capturado, então busca só por ISIN quando o usuário não sabe o
+    código de ativo pode simplesmente não resolver via SND (retorna lista
+    vazia, não é erro).
 """
 
 from __future__ import annotations
+
+import re
+import unicodedata
+from datetime import date, datetime
 
 from bs4 import BeautifulSoup
 
@@ -43,35 +48,50 @@ from debenture_search.models import (
     DebentureRef,
     MarketPriceSnapshot,
     SearchQuery,
-    Situacao,
     SourcedValue,
 )
 from debenture_search.providers.base import ProviderResult
 
 FONTE = "SND"
+_ENCODING = "windows-1252"
 
 
 class SndParsingError(Exception):
-    """A página do SND respondeu, mas o layout esperado não foi encontrado.
+    """A página do SND respondeu, mas o layout esperado não foi encontrado —
+    sinal de que o site mudou, não de que o ativo não existe (ver
+    SndNaoEncontrado para esse segundo caso)."""
 
-    Levantada em vez de retornar dados parciais/errados silenciosamente —
-    sinal de que o site mudou ou que os seletores em _parse_* ainda não
-    foram verificados contra o HTML real (ver docstring do módulo).
-    """
+
+class SndNaoEncontrado(Exception):
+    """Consulta bem-sucedida, mas o ativo/emissor buscado não existe no
+    SND — resultado vazio legítimo, nunca deve virar erro pro usuário."""
 
 
 class _Endpoints:
-    """URLs candidatas — NÃO confirmadas contra o site real (ver docstring do módulo)."""
-
-    BASE = "https://www.debentures.com.br"
-    ESTOQUE = f"{BASE}/exploreosnd/consultaadados/mercadosecundario/estoque_e.asp"
-    PRECOS_NEGOCIACAO = (
-        f"{BASE}/exploreosnd/consultaadados/mercadosecundario/precosdenegociacao_e.asp"
+    BASE = "https://www.debentures.com.br/exploreosnd"
+    ESTOQUE_FORM = f"{BASE}/consultaadados/estoque/estoqueporativo_f.asp"
+    ESTOQUE_RESULT = f"{BASE}/consultaadados/estoque/estoqueporativo_r.asp"
+    PRECOS_RESULT = f"{BASE}/consultaadados/mercadosecundario/precosdenegociacao_r.asp"
+    CARACTERISTICAS_DETALHE = (
+        f"{BASE}/consultaadados/emissoesdedebentures/caracteristicas_d.asp"
     )
 
 
+def _normalize(texto: str) -> str:
+    """Remove acentos e caixa para comparação de busca (não para exibição)."""
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+    return sem_acento.upper().strip()
+
+
+def _pad_ativo(codigo: str) -> str:
+    """O SND espera o código de ativo alinhado à esquerda em 10 caracteres
+    (ex.: "BODY12    ") nos parâmetros de formulário — confirmado no payload
+    real capturado."""
+    return codigo.strip().ljust(10)
+
+
 class SndScraperProvider:
-    """Implementa SearchProvider, CharacteristicsProvider (parcial) e MarketDataProvider."""
+    """Implementa SearchProvider, CharacteristicsProvider e MarketDataProvider."""
 
     name = FONTE
 
@@ -80,201 +100,338 @@ class SndScraperProvider:
         self._http = http_client or RateLimitedHttpClient()
 
     def is_available(self) -> bool:
-        # Sempre "ligado" — é a fonte pública de base. Se a requisição falhar
-        # em tempo de uso, o método correspondente retorna ProviderResult.falha,
-        # não uma exceção que derruba o restante da ficha.
         return True
 
-    # -- SearchProvider ----------------------------------------------------
+    # -- SearchProvider ------------------------------------------------
 
     def search(self, query: SearchQuery) -> list[DebentureRef]:
-        cache_key = query.isin or query.codigo_ativo or query.nome_emissor or ""
-        query_type = "isin" if query.isin else "codigo_ativo" if query.codigo_ativo else "nome_emissor"
+        if query.nome_emissor:
+            return self._search_por_emissor(query.nome_emissor)
+        codigo = query.codigo_ativo or query.isin
+        try:
+            _, ref = self._fetch_caracteristicas_html(codigo)
+        except SndNaoEncontrado:
+            return []
+        return [ref]
 
-        cached_html = self._cache.get(self.name, f"search:{query_type}", cache_key)
-        if cached_html is not None:
-            html = cached_html
-        else:
-            response = self._http.get(
-                _Endpoints.ESTOQUE,
-                params=_build_search_params(query),
+    def _search_por_emissor(self, nome: str) -> list[DebentureRef]:
+        html = self._get_cached_or_fetch(
+            "emissores_lista", "", _Endpoints.ESTOQUE_FORM, params=None
+        )
+        emissores = _parse_emissor_options(html)
+        alvo = _normalize(nome)
+        refs: list[DebentureRef] = []
+        for cnpj, nome_emissor in emissores:
+            if alvo not in _normalize(nome_emissor):
+                continue
+            ativos_html = self._get_cached_or_fetch(
+                "ativos_por_emissor", cnpj, _Endpoints.ESTOQUE_FORM,
+                params={"emissor": cnpj, "op_exc": ""},
             )
-            response.raise_for_status()
-            html = response.text
-            self._cache.set(self.name, f"search:{query_type}", cache_key, html)
+            for codigo_ativo in _parse_ativo_options(ativos_html):
+                refs.append(
+                    DebentureRef(isin=None, codigo_ativo=codigo_ativo, nome_emissor=nome_emissor)
+                )
+        return refs
 
-        return _parse_search_results_html(html)
-
-    # -- CharacteristicsProvider (parcial: só o que o SND ainda expõe) -----
+    # -- CharacteristicsProvider -----------------------------------------
 
     def fetch_characteristics(self, ref: DebentureRef) -> ProviderResult[Debenture]:
-        cache_key = ref.isin or ref.codigo_ativo or ""
+        codigo = ref.codigo_ativo or ref.isin
         try:
-            cached_html = self._cache.get(self.name, "estoque", cache_key)
-            if cached_html is not None:
-                html = cached_html
-            else:
-                response = self._http.get(_Endpoints.ESTOQUE, params=_ref_params(ref))
-                response.raise_for_status()
-                html = response.text
-                self._cache.set(self.name, "estoque", cache_key, html)
-
-            debenture = _parse_estoque_html(html, ref)
+            html, _ = self._fetch_caracteristicas_html(codigo)
+            debenture = _parse_caracteristicas_html(html, codigo_ativo=codigo.strip())
             return ProviderResult.ok(self.name, debenture)
-        except Exception as exc:  # noqa: BLE001 - queremos capturar qualquer falha de fonte externa
+        except SndNaoEncontrado:
+            # Não é falha de fonte — o ativo genuinamente não está aqui.
+            return ProviderResult.ok(self.name, Debenture())
+        except Exception as exc:  # noqa: BLE001
             return ProviderResult.falha(self.name, str(exc))
 
-    # -- MarketDataProvider --------------------------------------------------
+    def _fetch_caracteristicas_html(self, codigo: str) -> tuple[str, DebentureRef]:
+        """Tenta tip_deb=publicas, depois privadas. Levanta SndNaoEncontrado
+        se nenhum dos dois tiver o ativo."""
+        for tip_deb in ("publicas", "privadas"):
+            html = self._get_cached_or_fetch(
+                "caracteristicas", f"{tip_deb}:{codigo}",
+                _Endpoints.CARACTERISTICAS_DETALHE,
+                params={"tip_deb": tip_deb, "selecao": codigo},
+            )
+            if _caracteristicas_encontrou_ativo(html):
+                ref = DebentureRef(
+                    isin=_extrair_campo_texto(html, "ISIN"),
+                    codigo_ativo=codigo.strip(),
+                    nome_emissor=_extrair_campo_texto(html, "Emissor") or "",
+                )
+                return html, ref
+        raise SndNaoEncontrado(codigo)
+
+    # -- MarketDataProvider ------------------------------------------------
 
     def fetch_market_data(self, ref: DebentureRef) -> ProviderResult[list[MarketPriceSnapshot]]:
-        cache_key = ref.isin or ref.codigo_ativo or ""
+        codigo = ref.codigo_ativo
+        if not codigo:
+            return ProviderResult.ok(self.name, [])
         try:
-            cached_html = self._cache.get(self.name, "precos_negociacao", cache_key)
-            if cached_html is not None:
-                html = cached_html
-            else:
-                response = self._http.get(_Endpoints.PRECOS_NEGOCIACAO, params=_ref_params(ref))
-                response.raise_for_status()
-                html = response.text
-                self._cache.set(self.name, "precos_negociacao", cache_key, html)
-
+            caract_html, resolved_ref = self._fetch_caracteristicas_html(codigo)
+            cnpj = _extrair_cnpj_do_canonical(caract_html)
+            if cnpj is None:
+                raise SndParsingError(
+                    "CNPJ do emissor não encontrado no link canônico da página "
+                    "de características — necessário para consultar preços."
+                )
+            isin = resolved_ref.isin or ""
+            html = self._post_cached_or_fetch(
+                "precos", codigo,
+                _Endpoints.PRECOS_RESULT,
+                data={
+                    "op_exc": "False",
+                    "emissor": cnpj,
+                    "ativo": _pad_ativo(codigo),
+                    "ISIN": isin,
+                    "dt_ini": "",
+                    "dt_fim": "",
+                    "Submit32.x": "1",
+                    "Submit32.y": "1",
+                },
+            )
             snapshots = _parse_precos_html(html, ref)
             return ProviderResult.ok(self.name, snapshots)
+        except SndNaoEncontrado:
+            return ProviderResult.ok(self.name, [])
         except Exception as exc:  # noqa: BLE001
             return ProviderResult.falha(self.name, str(exc))
 
     def close(self) -> None:
         self._http.close()
 
+    # -- infra de cache/requisição ------------------------------------------
 
-def _build_search_params(query: SearchQuery) -> dict[str, str]:
-    # TODO(verificar): nomes reais dos parâmetros de busca do formulário SND.
-    if query.isin:
-        return {"isin": query.isin}
-    if query.codigo_ativo:
-        return {"emissor": query.codigo_ativo}
-    return {"emissor": query.nome_emissor or ""}
+    def _get_cached_or_fetch(
+        self, query_type: str, cache_key: str, url: str, params: dict[str, str] | None
+    ) -> str:
+        cached = self._cache.get(self.name, query_type, cache_key)
+        if cached is not None:
+            return cached
+        response = self._http.get(url, params=params)
+        response.raise_for_status()
+        html = response.content.decode(_ENCODING, errors="replace")
+        self._cache.set(self.name, query_type, cache_key, html)
+        return html
+
+    def _post_cached_or_fetch(
+        self, query_type: str, cache_key: str, url: str, data: dict[str, str]
+    ) -> str:
+        cached = self._cache.get(self.name, query_type, cache_key)
+        if cached is not None:
+            return cached
+        response = self._http.post(url, data=data)
+        response.raise_for_status()
+        html = response.content.decode(_ENCODING, errors="replace")
+        self._cache.set(self.name, query_type, cache_key, html)
+        return html
 
 
-def _ref_params(ref: DebentureRef) -> dict[str, str]:
-    if ref.isin:
-        return {"isin": ref.isin}
-    return {"emissor": ref.codigo_ativo or ref.nome_emissor}
+# -- parsing: lista de emissores / ativos --------------------------------------
 
 
-def _parse_search_results_html(html: str) -> list[DebentureRef]:
-    """TODO(verificar): seletor real da tabela/lista de resultados de busca."""
+def _parse_emissor_options(html: str) -> list[tuple[str, str]]:
     soup = BeautifulSoup(html, "lxml")
-    table = soup.select_one("table.resultado-busca")  # placeholder
-    if table is None:
+    select = soup.find("select", attrs={"name": "emissor"})
+    if select is None:
         raise SndParsingError(
-            "Tabela de resultados de busca não encontrada — seletor "
-            "'table.resultado-busca' é um placeholder, ajustar após capturar "
-            "HTML real do SND (ver docstring de providers/snd.py)."
+            "Select 'emissor' não encontrado em estoqueporativo_f.asp — "
+            "layout do SND pode ter mudado."
         )
-    refs: list[DebentureRef] = []
-    for row in table.select("tbody tr"):
-        cells = [c.get_text(strip=True) for c in row.select("td")]
-        if len(cells) < 3:
-            continue
-        codigo_ativo, isin, nome_emissor = cells[0], cells[1], cells[2]
-        refs.append(
-            DebentureRef(
-                isin=isin or None,
-                codigo_ativo=codigo_ativo or None,
-                nome_emissor=nome_emissor,
-            )
-        )
-    return refs
+    resultado = []
+    for option in select.find_all("option"):
+        valor = (option.get("value") or "").strip()
+        texto = option.get_text(strip=True)
+        if valor:
+            resultado.append((valor, texto))
+    return resultado
 
 
-def _parse_estoque_html(html: str, ref: DebentureRef) -> Debenture:
-    """TODO(verificar): seletores reais da página de estoque por ativo."""
+def _parse_ativo_options(html: str) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
-    campos = soup.select_one("div#ficha-estoque")  # placeholder
-    if campos is None:
+    select = soup.find("select", attrs={"name": "ativo"})
+    if select is None:
         raise SndParsingError(
-            "Bloco de dados de estoque não encontrado — seletor "
-            "'div#ficha-estoque' é um placeholder, ajustar após capturar "
-            "HTML real do SND (ver docstring de providers/snd.py)."
+            "Select 'ativo' não encontrado em estoqueporativo_f.asp?emissor=... "
+            "— layout do SND pode ter mudado."
         )
-
-    def campo(label: str) -> str | None:
-        el = campos.find(string=lambda s: s and label in s)  # type: ignore[arg-type]
-        if el is None:
-            return None
-        valor_el = el.find_next("td")
-        return valor_el.get_text(strip=True) if valor_el else None
-
-    situacao_raw = campo("Situação")
-    situacao = _map_situacao(situacao_raw)
-
-    return Debenture(
-        isin=SourcedValue(ref.isin, fonte=FONTE),
-        codigo_ativo=SourcedValue(ref.codigo_ativo, fonte=FONTE),
-        emissor_nome=SourcedValue(ref.nome_emissor, fonte=FONTE),
-        situacao=SourcedValue(situacao, fonte=FONTE),
-        motivo_saida=SourcedValue(campo("Motivo"), fonte=FONTE),
-        quantidade_mercado=SourcedValue(campo("Quantidade em Mercado"), fonte=FONTE),
-        quantidade_emitida=SourcedValue(campo("Quantidade Emitida"), fonte=FONTE),
-    )
+    return [
+        (option.get("value") or "").strip()
+        for option in select.find_all("option")
+        if (option.get("value") or "").strip()
+    ]
 
 
-def _parse_precos_html(html: str, ref: DebentureRef) -> list[MarketPriceSnapshot]:
-    """TODO(verificar): seletores reais da página de preços de negociação."""
-    soup = BeautifulSoup(html, "lxml")
-    table = soup.select_one("table#precos-negociacao")  # placeholder
-    if table is None:
-        raise SndParsingError(
-            "Tabela de preços de negociação não encontrada — seletor "
-            "'table#precos-negociacao' é um placeholder, ajustar após "
-            "capturar HTML real do SND (ver docstring de providers/snd.py)."
-        )
-
-    snapshots: list[MarketPriceSnapshot] = []
-    for row in table.select("tbody tr"):
-        cells = [c.get_text(strip=True) for c in row.select("td")]
-        if len(cells) < 6:
-            continue
-        periodo, pu_min, pu_med, pu_max, qtd, n_negocios = cells[:6]
-        snapshots.append(
-            MarketPriceSnapshot(
-                debenture_ref=ref,
-                periodo_referencia=periodo,
-                pu_minimo=SourcedValue(_parse_decimal(pu_min), fonte=FONTE),
-                pu_medio=SourcedValue(_parse_decimal(pu_med), fonte=FONTE),
-                pu_maximo=SourcedValue(_parse_decimal(pu_max), fonte=FONTE),
-                quantidade_negociada=SourcedValue(_parse_int(qtd), fonte=FONTE),
-                numero_negocios=SourcedValue(_parse_int(n_negocios), fonte=FONTE),
-            )
-        )
-    return snapshots
+# -- parsing: caracteristicas_d.asp -----------------------------------------
 
 
-def _map_situacao(raw: str | None) -> Situacao | None:
-    if raw is None:
+def _flatten(html: str) -> str:
+    texto = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
+    texto = re.sub(r"<[^>]+>", "\n", texto)
+    texto = re.sub(r"[ \t]+", " ", texto)
+    texto = re.sub(r"\n[ \t]*\n+", "\n", texto)
+    return texto
+
+
+def _caracteristicas_encontrou_ativo(html: str) -> bool:
+    """Heurística de 'não encontrado': uma página de características válida
+    sempre tem os blocos 'ISIN:' e 'Situação:'. Não usamos o rótulo
+    'Ativo:' aqui porque ele aparece DUAS vezes na página real (um rótulo
+    vazio de layout de tabela, seguido do rótulo com o valor de verdade) —
+    ambíguo demais pra servir de heurística. Sem uma amostra real de página
+    de 'não encontrado' pra confirmar o comportamento exato — ver docstring
+    do módulo — então isso é best-effort, documentado como tal."""
+    texto = _flatten(html)
+    return "ISIN:" in texto and re.search(r"Situa[^:\n]{0,10}:", texto) is not None
+
+
+def _campo(texto: str, prefixo_sem_acento: str) -> str | None:
+    """Extrai o valor de um campo 'Rótulo: valor' usando só o prefixo do
+    rótulo sem acentuação — o SND é servido em windows-1252/iso-8859-1 e o
+    HAR exportado pelo navegador às vezes corrompe caracteres acentuados
+    (viram 'ï¿½'); casar só o prefixo sem acento evita depender de acerto
+    de encoding para achar o campo."""
+    m = re.search(re.escape(prefixo_sem_acento) + r"[^:\n]{0,15}:\s*\n?\s*([^\n]+)", texto)
+    if m is None:
         return None
-    normalizado = raw.strip().lower()
-    if "ativ" in normalizado:
-        return Situacao.ATIVA
-    if "venc" in normalizado:
-        return Situacao.VENCIDA
-    if "resgat" in normalizado:
-        return Situacao.RESGATADA
+    valor = m.group(1).strip()
+    return valor or None
+
+
+def _campo_data(texto: str, prefixo_sem_acento: str) -> date | None:
+    """Como _campo, mas exige que o valor capturado tenha formato de data —
+    desambigua rótulos repetidos (ex.: 'Emissão' aparece em 'Registro CVM
+    da Emissão', 'Datas: Emissão' e 'Nominal na Emissão'; só a segunda tem
+    uma data como valor imediato)."""
+    for m in re.finditer(re.escape(prefixo_sem_acento) + r"[^:\n]{0,10}:\s*\n?\s*(\d{2}/\d{2}/\d{4})", texto):
+        return _parse_data_br(m.group(1))
     return None
 
 
-def _parse_decimal(raw: str) -> float | None:
-    limpo = raw.replace(".", "").replace(",", ".").strip()
+def _extrair_campo_texto(html: str, label_sem_acento: str) -> str | None:
+    return _campo(_flatten(html), label_sem_acento)
+
+
+def _extrair_cnpj_do_canonical(html: str) -> str | None:
+    """O CNPJ do emissor não aparece em texto simples na página, só embutido
+    no <link rel="canonical"> que aponta pro ANBIMA Data — é só leitura de
+    um dado que o próprio SND publica na sua página, não é uma chamada ao
+    ANBIMA."""
+    m = re.search(r"debentures/emissores/(\d{14})/emissoes", html)
+    return m.group(1) if m else None
+
+
+def _parse_decimal_br(raw: str) -> float | None:
+    limpo = raw.strip().replace(".", "").replace(",", ".")
     try:
         return float(limpo)
     except ValueError:
         return None
 
 
-def _parse_int(raw: str) -> int | None:
-    limpo = raw.replace(".", "").strip()
+def _parse_int_br(raw: str) -> int | None:
+    limpo = raw.strip().replace(".", "")
     try:
         return int(limpo)
     except ValueError:
         return None
+
+
+def _parse_data_br(raw: str) -> date | None:
+    raw = raw.strip()
+    try:
+        return datetime.strptime(raw, "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
+def _map_situacao(raw: str | None) -> str | None:
+    """Guarda o texto cru do SND (ex.: 'Registrado') em vez de forçar num
+    enum que pode não cobrir todos os valores reais do site — ver
+    justificativa no README/commit desta mudança: melhor mostrar o dado
+    real do que uma categorização inventada."""
+    return raw
+
+
+def _parse_caracteristicas_html(html: str, codigo_ativo: str) -> Debenture:
+    texto = _flatten(html)
+
+    indexador = _campo(texto, "Tipo de Remunera")
+    spread_m = re.search(r"Taxa de Juros/Spread:\s*\n?\s*([\d.,]+)", texto)
+    spread = spread_m.group(1).strip() if spread_m else None
+    if indexador and spread:
+        taxa_valor = f"{indexador} + {spread}%"
+    elif spread:
+        taxa_valor = f"{spread}%"
+    else:
+        taxa_valor = None
+
+    valor_nominal_m = re.search(
+        r"Nominal em\s*\n?\s*[\d/]+:\s*\n?\s*R\$\s*([\d.,]+)", texto
+    )
+    valor_nominal = valor_nominal_m.group(1).strip() if valor_nominal_m else None
+
+    rating = _campo(texto, "Classifica")
+    if rating and not re.search(r"[A-Za-z0-9]", rating):
+        rating = None
+
+    return Debenture(
+        isin=SourcedValue(_campo(texto, "ISIN"), fonte=FONTE),
+        codigo_ativo=SourcedValue(codigo_ativo, fonte=FONTE),
+        emissor_nome=SourcedValue(_campo(texto, "Emissor"), fonte=FONTE),
+        numero_serie=SourcedValue(_campo(texto, "rie/Emiss"), fonte=FONTE),
+        indexador=SourcedValue(indexador, fonte=FONTE),
+        taxa=SourcedValue(taxa_valor, fonte=FONTE),
+        data_emissao=SourcedValue(_campo_data(texto, "Emiss"), fonte=FONTE),
+        data_vencimento=SourcedValue(_campo_data(texto, "Vencimento"), fonte=FONTE),
+        especie=SourcedValue(_campo(texto, "Garantia/Esp"), fonte=FONTE),
+        classe=SourcedValue(_campo(texto, "Classe"), fonte=FONTE),
+        quantidade_emitida=SourcedValue(_campo(texto, "Emitida"), fonte=FONTE),
+        quantidade_mercado=SourcedValue(_campo(texto, "Mercado"), fonte=FONTE),
+        valor_nominal_unitario=SourcedValue(valor_nominal, fonte=FONTE),
+        situacao=SourcedValue(_map_situacao(_campo(texto, "Situa")), fonte=FONTE),
+        rating=SourcedValue(rating, fonte=FONTE),
+    )
+
+
+# -- parsing: precosdenegociacao_r.asp --------------------------------------
+
+
+def _parse_precos_html(html: str, ref: DebentureRef) -> list[MarketPriceSnapshot]:
+    soup = BeautifulSoup(html, "lxml")
+    isin_regex = re.compile(r"^BR[A-Z0-9]{10}$")
+
+    linhas: list[MarketPriceSnapshot] = []
+    for tr in soup.find_all("tr"):
+        tds = tr.find_all("td")
+        textos = [td.get_text(strip=True) for td in tds]
+        if len(textos) != 20 or not any(isin_regex.match(t) for t in textos):
+            continue
+        valores = [t for t in textos if t]
+        if len(valores) < 10:
+            continue
+        data_str, _emissor, _ativo, _isin, qtd, neg, minimo, medio, maximo, _pu_curva = valores[:10]
+        linhas.append(
+            MarketPriceSnapshot(
+                debenture_ref=ref,
+                periodo_referencia=data_str,
+                pu_minimo=SourcedValue(_parse_decimal_br(minimo), fonte=FONTE),
+                pu_medio=SourcedValue(_parse_decimal_br(medio), fonte=FONTE),
+                pu_maximo=SourcedValue(_parse_decimal_br(maximo), fonte=FONTE),
+                quantidade_negociada=SourcedValue(_parse_int_br(qtd), fonte=FONTE),
+                numero_negocios=SourcedValue(_parse_int_br(neg), fonte=FONTE),
+            )
+        )
+
+    if not linhas:
+        # Pode ser "sem negociação no período" (legítimo) ou o layout ter
+        # mudado — como não temos uma amostra real de "zero negócios" pra
+        # diferenciar, não levantamos erro aqui: lista vazia é honesto nos
+        # dois casos (campo fica "indisponível" na ficha, não inventa dado).
+        return []
+    return linhas

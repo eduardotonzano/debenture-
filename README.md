@@ -24,51 +24,47 @@ O que está implementado e testado:
   (`http_client.py`) — a base para nunca rebater o SND com força bruta.
 - `ManualInputProvider`: overrides manuais (rating, taxa, quantidade em
   mercado), sempre disponível, com precedência máxima no merge.
-- `SndScraperProvider`: **stub estruturado, não verificado contra o site
-  real** — ver seção "Limitação de rede" abaixo.
-- CLI (`python -m debenture_search`) para validar o fluxo ponta a ponta
-  sem UI.
-- 18 testes unitários cobrindo aggregator, cache e providers (todos
-  rodam sem rede).
+- `SndScraperProvider`: **parsing verificado contra HTML real** do SND
+  (capturado via HAR pelo usuário em 25/08/2026 — ver
+  `tests/fixtures/snd_*.html`). Busca por nome de emissor (via lista
+  estática de ~1.466 emissores embutida na página, cacheada localmente),
+  por código de ativo (rota direta `caracteristicas_d.asp`) e
+  características completas (indexador, spread, garantia, classe,
+  quantidades, valor nominal, agentes, situação, rating quando houver) —
+  não é mais um stub. Detalhes e incertezas remanescentes na seção
+  "Cobertura real do SND" abaixo.
+- CLI (`python -m debenture_search`) validada ponta a ponta com cache
+  pré-populado (sem rede).
+- 28 testes automatizados (parsing puro + integração do provider + cache +
+  aggregator), todos rodam sem rede.
 
-## Limitação de rede neste ambiente
+## Cobertura real do SND
 
-O ambiente onde a Fase 1 foi desenvolvida tem o egress de rede bloqueado
-para `debentures.com.br` (política do ambiente remoto Claude Code, não é
-algo contornável nem algo que deva ser contornado). Isso significa que:
+O fluxo real do site foi mapeado via HAR de tráfego de rede (não
+documentação oficial — o SND não expõe uma). O que está confirmado:
 
-- **Não foi possível abrir as páginas reais do SND** para confirmar URLs,
-  método de busca (GET/POST), nomes de campos de formulário, e estrutura
-  HTML das tabelas de estoque/preços.
-- `providers/snd.py` foi escrito com a arquitetura completa (rate limit,
-  cache, contrato com o resto do sistema, tratamento de erro) mas com os
-  seletores CSS e parâmetros de busca marcados como `TODO(verificar)` —
-  eles são placeholders plausíveis, não confirmados.
-- Os testes de `providers/snd.py` usam fixtures HTML **sintéticas**
-  (escritas à mão para bater com os seletores placeholder), não capturas
-  reais do site — ver aviso no topo de `tests/test_snd_provider.py`.
-- Quando o SND real não bate com um seletor esperado, o provider levanta
-  `SndParsingError` com uma mensagem clara, em vez de retornar um dado
-  errado silenciosamente.
-
-### Próximo passo para destravar isso
-
-Rodar este projeto num ambiente com acesso à internet (ex.: sua máquina
-local) e:
-
-1. Abrir manualmente as páginas de "Estoque por Ativo" e "Preços de
-   Negociação" em debentures.com.br para um ativo conhecido (ex.: um
-   código de debênture que você já acompanha).
-2. Salvar o HTML de resposta em `tests/fixtures/` (substituindo as
-   fixtures sintéticas) e ajustar as URLs/seletores em `providers/snd.py`
-   (`_Endpoints`, `_build_search_params`, `_parse_search_results_html`,
-   `_parse_estoque_html`, `_parse_precos_html`) até os testes passarem
-   com dados reais.
-3. Rodar `python -m debenture_search busca <ISIN ou código>` e comparar
-   manualmente com o que aparece no site.
-
-Isso é trabalho de ajuste de seletores sobre uma arquitetura já pronta —
-não é para refazer o desenho do provider.
+- **Busca por nome de emissor**: funciona bem. A lista completa de
+  emissores (nome → CNPJ) vem embutida como `<select>` estático numa única
+  página, baixada e cacheada uma vez — a busca em si é local (substring,
+  sem acento/caixa), não bate no servidor por letra digitada.
+- **Busca por código de ativo**: rota direta via
+  `caracteristicas_d.asp?tip_deb={publicas|privadas}&selecao=<código>`, sem
+  precisar resolver o emissor antes. Essa mesma página já traz a ficha de
+  características completa.
+- **Busca por ISIN direto** (sem saber o código do ativo): **não
+  encontramos um caminho no SND para isso** — o site não expõe busca
+  global por ISIN, só por emissor ou por código de ativo. `search()` tenta
+  passar o ISIN como `selecao=` (mesma rota do código de ativo) como
+  aposta best-effort, mas isso não foi confirmado contra o site real —
+  pode simplesmente não funcionar, retornando lista vazia (comportamento
+  honesto, não seria erro).
+- **"Não encontrado"**: a heurística usada (`_caracteristicas_encontrou_ativo`)
+  não foi validada contra uma página real de "ativo não existe", porque não
+  capturamos uma — está documentada como best-effort no código.
+- **Eventos futuros** (próxima repactuação/amortização): a página de
+  características tem esses dados brutos (tabela de amortização/prêmio),
+  mas o parsing para `EventsProvider` não foi implementado nesta fase —
+  fica pra quando isso for de fato necessário.
 
 ### Descontinuação anunciada do SND
 
@@ -112,14 +108,13 @@ consultando no próprio navegador, como fez para diagnosticar isso).
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
-# Buscar (tenta o SND; ainda vai falhar até os seletores serem verificados,
-# ver seção acima — mas roda ponta a ponta contra o merge de fontes)
-.venv/bin/python -m debenture_search busca TEPA23
-.venv/bin/python -m debenture_search busca BRTEPADBS001 --tipo isin
-.venv/bin/python -m debenture_search busca "Tegma" --tipo emissor
+# Buscar (bate no SND de verdade; funciona melhor por código de ativo ou
+# nome de emissor — busca só por ISIN pode não resolver, ver seção acima)
+.venv/bin/python -m debenture_search busca BODY12 --tipo codigo_ativo
+.venv/bin/python -m debenture_search busca "Bodytech" --tipo emissor
 
 # Registrar um dado que nenhuma fonte automática cobre (ex.: rating)
-.venv/bin/python -m debenture_search manual-set TEPA23 rating "AA-" \
+.venv/bin/python -m debenture_search manual-set BODY12 rating "AA-" \
     --fonte "Fitch, 03/2026" --tipo codigo_ativo
 
 # Rodar a suíte de testes (não depende de rede)
@@ -131,9 +126,9 @@ Por padrão os dados locais (cache e overrides manuais) ficam em
 
 ## Plano de fases
 
-1. **Fase 1 (esta)** — modelo de dados, interfaces de provider, SND
-   (estoque/situação/mercado secundário), cache, CLI de validação ponta a
-   ponta.
+1. **Fase 1 (concluída)** — modelo de dados, interfaces de provider, SND
+   (características/situação/mercado secundário) com parsing validado
+   contra HTML real, cache, CLI de validação ponta a ponta.
 2. **Fase 2** — UI da ficha do ativo (busca única + seções + fonte por
    campo + tela de desambiguação), input manual via tela.
 3. **Fase 3** — `AnbimaAPIProvider` (características completas + preço
