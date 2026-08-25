@@ -8,6 +8,7 @@ despercebido lá, mas não aqui.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from debenture_search.cache import SqliteCache
@@ -34,6 +35,13 @@ def _seed_cache(cache: SqliteCache) -> None:
     cache.set(
         FONTE, "precos", "BODY12",
         (FIXTURES / "snd_precosdenegociacao_r.html").read_text(encoding="utf-8"),
+    )
+    # Sempre seedado — fetch_characteristics também confere a lista de
+    # registros excluídos, e sem isso o teste tentaria rede de verdade.
+    mes_fim = datetime.utcnow().strftime("%m/%Y")
+    cache.set(
+        FONTE, "registros_excluidos", f"01/2000-{mes_fim}",
+        (FIXTURES / "snd_registrosexcluidos_r.html").read_text(encoding="utf-8"),
     )
 
 
@@ -86,6 +94,33 @@ def test_fetch_market_data_sem_rede(tmp_path) -> None:
     assert resultado.sucesso
     assert len(resultado.valor) >= 30
     assert resultado.valor[0].pu_medio.valor == 4466.874270
+
+
+def test_fetch_characteristics_ativo_nao_excluido_fica_indisponivel(tmp_path) -> None:
+    cache = SqliteCache(tmp_path / "cache.sqlite3")
+    _seed_cache(cache)
+    provider = SndScraperProvider(cache=cache)
+    ref = DebentureRef(isin="BRBODYDBS000", codigo_ativo="BODY12", nome_emissor="A Bodytech")
+
+    resultado = provider.fetch_characteristics(ref)
+
+    assert resultado.sucesso
+    assert resultado.valor.data_exclusao_registro.disponivel is False
+
+
+def test_marcar_registro_excluido_preenche_data_e_motivo(tmp_path) -> None:
+    from debenture_search.models import Debenture
+
+    cache = SqliteCache(tmp_path / "cache.sqlite3")
+    _seed_cache(cache)
+    provider = SndScraperProvider(cache=cache)
+    deb = Debenture()
+
+    provider._marcar_registro_excluido(deb, "QGIM12")
+
+    assert deb.data_exclusao_registro.valor.isoformat() == "2023-07-04"
+    assert deb.motivo_saida.valor == "VENCIMENTO"
+    assert "Registros Exclu" in deb.motivo_saida.fonte
 
 
 def test_fetch_characteristics_ativo_inexistente_nao_falha(tmp_path) -> None:

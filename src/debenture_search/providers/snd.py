@@ -76,6 +76,9 @@ class _Endpoints:
     CARACTERISTICAS_DETALHE = (
         f"{BASE}/consultaadados/emissoesdedebentures/caracteristicas_d.asp"
     )
+    REGISTROS_EXCLUIDOS_RESULT = (
+        f"{BASE}/consultaadados/emissoesdedebentures/registrosexcluidos_r.asp"
+    )
 
 
 def _normalize(texto: str) -> str:
@@ -142,12 +145,49 @@ class SndScraperProvider:
         try:
             html, _ = self._fetch_caracteristicas_html(codigo)
             debenture = _parse_caracteristicas_html(html, codigo_ativo=codigo.strip())
+            self._marcar_registro_excluido(debenture, codigo)
             return ProviderResult.ok(self.name, debenture)
         except SndNaoEncontrado:
             # Não é falha de fonte — o ativo genuinamente não está aqui.
             return ProviderResult.ok(self.name, Debenture())
         except Exception as exc:  # noqa: BLE001
             return ProviderResult.falha(self.name, str(exc))
+
+    def _marcar_registro_excluido(self, debenture: Debenture, codigo: str) -> None:
+        """Confere se o ativo está na lista de Registros Excluídos do SND —
+        um dos sinais mais diretos de 'problema com a debênture' que o SND
+        expõe (motivo de exclusão às vezes indica processo na CVM, e o
+        próprio nome do emissor às vezes já vem com 'EM RECUPERAÇÃO
+        JUDICIAL'). Falha aqui nunca derruba a ficha — só deixa os campos
+        de exclusão indisponíveis."""
+        try:
+            registros = self._fetch_registros_excluidos()
+        except Exception:  # noqa: BLE001
+            return
+        alvo = codigo.strip().upper()
+        for data_exclusao, codigo_ativo, _emissor, motivo in registros:
+            if codigo_ativo.strip().upper() == alvo:
+                debenture.data_exclusao_registro = SourcedValue(
+                    data_exclusao, fonte=f"{FONTE} (Registros Excluídos)"
+                )
+                if motivo:
+                    debenture.motivo_saida = SourcedValue(
+                        motivo, fonte=f"{FONTE} (Registros Excluídos)"
+                    )
+                return
+
+    def _fetch_registros_excluidos(self) -> list[tuple[date, str, str, str | None]]:
+        """Lista GLOBAL (todos os emissores) de registros excluídos —
+        buscada e cacheada uma única vez (não por ativo), depois filtrada
+        localmente. `mes_ini` é obrigatório no formulário real; usamos uma
+        data bem antiga como padrão pra pegar o histórico completo."""
+        mes_fim = datetime.utcnow().strftime("%m/%Y")
+        html = self._post_cached_or_fetch(
+            "registros_excluidos", f"01/2000-{mes_fim}",
+            _Endpoints.REGISTROS_EXCLUIDOS_RESULT,
+            data={"mes_ini": "01/2000", "mes_fim": mes_fim, "Submit3.x": "1", "Submit3.y": "1"},
+        )
+        return _parse_registros_excluidos_html(html)
 
     def _fetch_caracteristicas_html(self, codigo: str) -> tuple[str, DebentureRef]:
         """Tenta tip_deb=publicas, depois privadas. Levanta SndNaoEncontrado
@@ -469,3 +509,29 @@ def _parse_precos_html(html: str, ref: DebentureRef) -> list[MarketPriceSnapshot
         # dois casos (campo fica "indisponível" na ficha, não inventa dado).
         return []
     return linhas
+
+
+# -- parsing: registrosexcluidos_r.asp --------------------------------------
+
+
+def _parse_registros_excluidos_html(html: str) -> list[tuple[date, str, str, str | None]]:
+    """Lista global: Data de Exclusão | Ativo | Emissor | Motivo. O Motivo
+    vem em branco na maioria das linhas (SND não preenche sempre) — isso é
+    dado real, não falha de parsing."""
+    soup = BeautifulSoup(html, "lxml")
+    data_regex = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+
+    resultado: list[tuple[date, str, str, str | None]] = []
+    for tr in soup.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) != 6:
+            continue
+        textos = [td.get_text(strip=True) for td in tds]
+        data_str, codigo_ativo, emissor, _sep, motivo, _sep2 = textos
+        if not data_regex.match(data_str):
+            continue
+        data_exclusao = _parse_data_br(data_str)
+        if data_exclusao is None:
+            continue
+        resultado.append((data_exclusao, codigo_ativo, emissor, motivo or None))
+    return resultado

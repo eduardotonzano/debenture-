@@ -10,6 +10,14 @@
   <a class="btn btn-secondary" href="/">&larr; Nova busca</a>
 </div>
 
+{% if deb.data_exclusao_registro.disponivel %}
+<div class="card-alerta">
+  <strong>Registro excluído do SND</strong>
+  <p>Em {{ fmt(deb.data_exclusao_registro.valor) }}{% if deb.motivo_saida.disponivel %} — motivo: {{ deb.motivo_saida.valor }}{% else %} — motivo não informado pela fonte{% endif %}.</p>
+  <p class="hint" style="margin:6px 0 0">Fonte: {{ deb.data_exclusao_registro.fonte }}. Isso não significa necessariamente inadimplência — pode ser vencimento normal, resgate, ou outro motivo administrativo. Confira "Motivo de saída" na seção Situação.</p>
+</div>
+{% endif %}
+
 <div class="toolbar">
   <a class="btn" href="/manual?{{ ref_params|urlencode_params }}">+ Adicionar dado manual</a>
 </div>
@@ -47,6 +55,7 @@
   <div class="field-grid">
     {{ m.campo("Situação", deb.situacao) }}
     {{ m.campo("Motivo de saída", deb.motivo_saida) }}
+    {{ m.campo("Data de exclusão do registro", deb.data_exclusao_registro) }}
   </div>
 </div>
 

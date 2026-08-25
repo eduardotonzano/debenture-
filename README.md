@@ -49,7 +49,21 @@ O que está implementado e testado:
   depositária e coordenador líder — todos vindos do SND, mesma página de
   características. Adicionado a pedido do usuário ("como foi realizada a
   emissão", "banco coordenador").
-- 41 testes automatizados (parsing + integração dos providers + cache +
+- **Alerta de "Registro Excluído do SND"**: a pedido do usuário
+  ("informe rápido se há problema com a debênture"). O SND mantém uma
+  lista GLOBAL de registros excluídos (`registrosexcluidos_r.asp`, todos
+  os emissores, não por ativo) com data de exclusão e, às vezes, motivo —
+  já vimos motivos como "PROCESSO DEVOLVIDO PELA CVM" e emissores anotados
+  como "EM RECUPERAÇÃO JUDICIAL" direto no nome. Essa lista é baixada e
+  cacheada uma única vez (não por busca) e cruzada localmente com o ativo
+  da ficha. Quando bate, um banner de alerta aparece no topo da ficha,
+  antes de qualquer outra seção — com a ressalva de que exclusão não
+  significa necessariamente inadimplência (pode ser vencimento normal).
+  As outras três páginas do mesmo tipo que o SND expõe (Inadimplências,
+  Vencimentos Antecipados, Repactuações) ainda não têm captura de
+  resultado real — ficaram só no formulário, ver `tests/fixtures/` e a
+  seção abaixo.
+- 44 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -89,6 +103,22 @@ documentação oficial — o SND não expõe uma). O que está confirmado:
   características tem esses dados brutos (tabela de amortização/prêmio),
   mas o parsing para `EventsProvider` não foi implementado nesta fase —
   fica pra quando isso for de fato necessário.
+
+### Páginas de "problema" ainda pendentes: Inadimplências, Vencimentos Antecipados, Repactuações
+
+O SND expõe mais três relatórios GLOBAIS no mesmo padrão de "Registros
+Excluídos" (formulário com `mes_ini`/`emissor`/`ativo` opcionais,
+resultado em `_r.asp`), mas nenhum teve uma submissão real capturada
+ainda — só o formulário (`tests/fixtures` não tem os `_r.asp` desses
+três). Provavelmente valem a mesma implementação (busca uma vez, cacheia,
+cruza localmente com o ativo da ficha), mas não dá pra confirmar a
+estrutura da tabela sem uma captura real. Próximo passo: repetir o
+processo de HAR já usado nas outras páginas, especificamente clicando
+"Enviar" em cada uma:
+
+- `inadimplencias_f.asp` (`inadimplencias_r.asp`)
+- `vencimentosantecipados_f.asp` (`vencimentosantecipados_r.asp`)
+- `repactuacoes_f.asp` (`repactuacoes_r.asp`)
 
 ### Descontinuação anunciada do SND
 

@@ -23,6 +23,7 @@ from debenture_search.providers.snd import (
     _parse_caracteristicas_html,
     _parse_emissor_options,
     _parse_precos_html,
+    _parse_registros_excluidos_html,
     _pad_ativo,
 )
 
@@ -124,3 +125,29 @@ def test_parse_precos_html_sem_isin_na_pagina_retorna_vazio() -> None:
 def test_pad_ativo() -> None:
     assert _pad_ativo("BODY12") == "BODY12    "
     assert len(_pad_ativo("BODY12")) == 10
+
+
+def test_parse_registros_excluidos_html() -> None:
+    """Lista global (todos os emissores) de registros excluídos — o sinal
+    de 'problema com a debênture' mais direto que o SND expõe: motivo de
+    exclusão às vezes indica processo na CVM, e o nome do emissor às vezes
+    já vem anotado com 'EM RECUPERAÇÃO JUDICIAL'."""
+    html = (FIXTURES / "snd_registrosexcluidos_r.html").read_text(encoding="utf-8")
+    registros = _parse_registros_excluidos_html(html)
+
+    assert len(registros) == 1424  # histórico real, fev/2021 a ago/2026
+
+    com_motivo = [r for r in registros if r[3]]
+    assert len(com_motivo) == 4  # a maioria vem sem motivo preenchido — dado real, não bug
+
+    data, codigo_ativo, emissor, motivo = next(r for r in registros if r[1] == "QGIM12")
+    assert data.isoformat() == "2023-07-04"
+    assert motivo == "VENCIMENTO"
+    assert "QUEIROZ GALVAO" in emissor
+
+    _, codigo_ativo2, emissor2, motivo2 = next(r for r in registros if r[1] == "ODBE13")
+    assert "RECUPERACAO JUDICIAL" in emissor2
+    assert motivo2 == "VENCIMENTO"
+
+    # ativo ativo (sem trocadilho) não deve aparecer na lista de excluídos
+    assert not any(r[1] == "BODY12" for r in registros)
