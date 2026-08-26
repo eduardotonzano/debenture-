@@ -9,8 +9,18 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from datetime import date
+
 from debenture_search.aggregator import DebentureAggregator
-from debenture_search.models import Debenture, DebentureRef, MarketPriceSnapshot, SearchQuery, SourcedValue
+from debenture_search.models import (
+    Debenture,
+    DebentureRef,
+    Document,
+    MarketPriceSnapshot,
+    SearchQuery,
+    SourcedValue,
+    TipoDocumento,
+)
 from debenture_search.providers.base import ProviderResult
 from debenture_search.providers.manual import ManualInputProvider
 from debenture_search.web import create_app
@@ -47,6 +57,26 @@ class FakeCharacteristicsProvider:
             situacao=SourcedValue("Registrado", fonte="SND"),
         )
         return ProviderResult.ok(self.name, deb)
+
+
+class FakeDocumentsProvider:
+    name = "fake-docs"
+
+    def is_available(self) -> bool:
+        return True
+
+    def fetch_documents(self, ref: DebentureRef, emissor_cnpj: str | None) -> ProviderResult[list[Document]]:
+        docs = [
+            Document(
+                tipo=TipoDocumento.FATO_RELEVANTE,
+                url="https://www.rad.cvm.gov.br/ENET/frmDownloadDocumento.aspx?x=1",
+                data_publicacao=date(2025, 3, 10),
+                descricao="Aviso aos Debenturistas",
+                fonte="CVM (Dados Abertos IPE)",
+                debenture_ref=ref,
+            )
+        ]
+        return ProviderResult.ok(self.name, docs)
 
 
 class FailingSearchProvider:
@@ -190,3 +220,20 @@ def test_com_env_vars_de_auth_libera_credencial_correta(monkeypatch) -> None:
     client = _client_com_refs([])
     r = client.get("/", auth=("admin", "segredo"))
     assert r.status_code == 200
+
+
+def test_ficha_mostra_documentos_cvm_com_rotulo_e_descricao() -> None:
+    def factory() -> DebentureAggregator:
+        return DebentureAggregator(
+            search_providers=[FakeSearchProvider([REF])],
+            characteristics_providers=[FakeCharacteristicsProvider()],
+            documents_providers=[FakeDocumentsProvider()],
+        )
+
+    client = TestClient(create_app(aggregator_factory=factory))
+    r = client.get("/ficha", params={"codigo_ativo": "BODY12"})
+
+    assert r.status_code == 200
+    assert "Fato Relevante" in r.text
+    assert "Aviso aos Debenturistas" in r.text
+    assert "10/03/2025" in r.text

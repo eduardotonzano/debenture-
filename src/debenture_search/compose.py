@@ -13,10 +13,12 @@ from debenture_search.config import (
     ANBIMA_CLIENT_ID,
     ANBIMA_CLIENT_SECRET,
     CACHE_DB_PATH,
+    DATA_DIR,
     MANUAL_INPUT_DB_PATH,
 )
 from debenture_search.aggregator import DebentureAggregator
 from debenture_search.providers.anbima_api import AnbimaAPIProvider
+from debenture_search.providers.cvm import CvmDocumentsProvider
 from debenture_search.providers.manual import ManualInputProvider
 from debenture_search.providers.snd import SndScraperProvider
 
@@ -30,6 +32,7 @@ def build_aggregator() -> DebentureAggregator:
         ambiente=ANBIMA_AMBIENTE,
     )
     manual = ManualInputProvider(MANUAL_INPUT_DB_PATH)
+    cvm = CvmDocumentsProvider(cache_dir=DATA_DIR / "cvm_ipe")
 
     return DebentureAggregator(
         search_providers=[snd],
@@ -42,4 +45,7 @@ def build_aggregator() -> DebentureAggregator:
         # o aggregator a ignora automaticamente.
         market_data_providers=[snd, anbima_api],
         events_providers=[snd],
+        # CVM precisa do CNPJ que o SND resolve em characteristics_providers
+        # (roda antes) — sem CNPJ disponível, simplesmente não retorna nada.
+        documents_providers=[cvm],
     )

@@ -136,6 +136,9 @@ def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> Fast
         ref = ref_from_params(codigo_ativo, isin, nome_emissor)
         aggregator = aggregator_factory()
         deb = aggregator.build_ficha(ref)
+        # Ordenado aqui (não no template) pra nunca comparar None com date
+        # no Jinja `sort` se algum documento vier sem data de publicação.
+        deb.documentos.sort(key=lambda d: d.data_publicacao or date.min, reverse=True)
         return templates.TemplateResponse(
             request, "ficha.html", {"deb": deb, "ref": ref, "ref_params": ref_to_params(ref)}
         )

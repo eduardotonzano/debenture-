@@ -152,6 +152,12 @@ class SndScraperProvider:
         try:
             html, _ = self._fetch_caracteristicas_html(codigo)
             debenture = _parse_caracteristicas_html(html, codigo_ativo=codigo.strip())
+            cnpj = _extrair_cnpj_do_canonical(html)
+            if cnpj:
+                # Já extraído de qualquer forma pra alimentar a consulta de
+                # preços — só faltava expor no modelo (usado também pelo
+                # CvmDocumentsProvider pra casar documentos por CNPJ).
+                debenture.emissor_cnpj = SourcedValue(cnpj, fonte=FONTE)
             self._marcar_registro_excluido(debenture, codigo)
             self._marcar_vencimento_antecipado(debenture, codigo)
             self._marcar_inadimplencia(debenture, codigo)

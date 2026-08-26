@@ -93,8 +93,11 @@ class DebentureAggregator:
             if resultado.sucesso and resultado.valor:
                 debenture.eventos.extend(resultado.valor)
 
+        cnpj_resolvido = (
+            debenture.emissor_cnpj.valor if debenture.emissor_cnpj.disponivel else None
+        )
         for provider in self.documents_providers:
-            resultado = provider.fetch_documents(ref)
+            resultado = provider.fetch_documents(ref, cnpj_resolvido)
             if resultado.sucesso and resultado.valor:
                 debenture.documentos.extend(resultado.valor)
 

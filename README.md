@@ -5,7 +5,7 @@ nome da empresa emissora — retorna uma ficha completa do ativo (não um
 dashboard de múltiplos ativos), com cada campo marcado com sua fonte ou
 "indisponível". Uso interno/pessoal, sem autenticação multiusuário.
 
-## Status (Fase 1 + Fase 2 + Fase 3 concluídas)
+## Status (Fase 1 + Fase 2 + Fase 3 + Fase 4 concluídas)
 
 O que está implementado e testado:
 
@@ -108,7 +108,28 @@ O que está implementado e testado:
   que gerou `400 Bad Request` ("Invalid client_id") por dias até
   copiarmos o valor de verdade em vez de ler/digitar. Lição: credencial
   sempre se copia, nunca se transcreve visualmente.
-- 61 testes automatizados (parsing + integração dos providers + cache +
+- **`CvmDocumentsProvider`** (Fase 4, contrato real confirmado): Fatos
+  Relevantes via o Portal de Dados Abertos da CVM
+  (`dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{ano}.zip`)
+  — um ZIP por ano civil com um CSV (`;`) de todos os documentos periódicos
+  e eventuais de companhias abertas. Confirmado por download real do
+  usuário (ano 2025, 19,2 MB): colunas `CNPJ_Companhia`, `Nome_Companhia`,
+  `Categoria`, `Assunto`, `Data_Entrega`, `Link_Download`, entre outras; o
+  link de um documento foi aberto manualmente e mostrou o PDF direto, sem
+  login. Filtra só `Categoria == "Fato Relevante"` e casa **por CNPJ**, não
+  por nome (texto livre, inconsistente entre CVM e SND) — por isso o SND
+  passou a expor `Debenture.emissor_cnpj` de verdade (já extraía esse CNPJ
+  internamente pra consultar preços, só nunca tinha sido colocado no
+  campo do modelo) e `DocumentsProvider.fetch_documents()` ganhou um
+  segundo parâmetro (`emissor_cnpj`) que o aggregator preenche com o CNPJ
+  já resolvido pelas fontes de características, antes de chamar as fontes
+  de documento. Sem CNPJ resolvido, a fonte não arrisca casar por nome —
+  fica vazia. Cobre o ano corrente + 4 anteriores (cache local de 24h por
+  arquivo anual); Fatos Relevantes mais antigos ficam de fora, documentado
+  aqui, não escondido. Prospecto e Escritura de Emissão continuam
+  indisponíveis — vêm de outro sistema da CVM (documentos de oferta
+  pública), ainda não investigado.
+- 71 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -268,8 +289,11 @@ fora do escopo por ora.
    ambiente sandbox da ANBIMA (fora deste ambiente de desenvolvimento,
    que segue bloqueado pro domínio) — ver `providers/anbima_api.py` para
    o contrato completo.
-4. **Fase 4** — `CvmDocumentsProvider` (prospecto, escritura, fatos
-   relevantes), complementar/opcional.
+4. **Fase 4 (concluída — Fato Relevante; Prospecto/Escritura pendentes)** —
+   `CvmDocumentsProvider` via Dados Abertos da CVM (dataset IPE), casando
+   por CNPJ do emissor (agora exposto pelo SND). Prospecto e Escritura de
+   Emissão ficam pra depois — vêm de outro sistema da CVM, ainda não
+   investigado.
 5. **Fase 5 (opcional)** — exportação da ficha, histórico de buscas,
    testes automatizados de regressão do scraper.
 

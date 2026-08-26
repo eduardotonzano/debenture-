@@ -115,6 +115,10 @@ class Document:
     tipo: TipoDocumento
     url: str
     data_publicacao: date | None = None
+    # Assunto/título do documento (ex.: "Aviso aos Debenturistas") — sem
+    # isso, uma lista de Fatos Relevantes é só uma lista de datas repetidas
+    # e inúteis; é a informação que de fato diz do que se trata cada um.
+    descricao: str | None = None
     fonte: str = "CVM"
     debenture_ref: DebentureRef | None = None
     issuer_id: str | None = None

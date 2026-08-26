@@ -151,8 +151,12 @@
   {% if deb.documentos %}
   <ul>
     {% for d in deb.documentos %}
-    <li><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.tipo.value }}</a>
-      <span class="badge badge-fonte">{{ d.fonte }}</span></li>
+    <li>
+      <a href="{{ d.url }}" target="_blank" rel="noopener">{{ m.rotulo_documento(d.tipo) }}</a>
+      {% if d.data_publicacao %} — {{ fmt(d.data_publicacao) }}{% endif %}
+      <span class="badge badge-fonte">{{ d.fonte }}</span>
+      {% if d.descricao %}<p class="hint" style="margin:4px 0 0">{{ d.descricao }}</p>{% endif %}
+    </li>
     {% endfor %}
   </ul>
   {% else %}

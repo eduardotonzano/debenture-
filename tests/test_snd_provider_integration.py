@@ -95,6 +95,10 @@ def test_fetch_characteristics_sem_rede(tmp_path) -> None:
     assert resultado.valor.isin.valor == "BRBODYDBS000"
     assert resultado.valor.indexador.valor == "DI"
     assert resultado.valor.situacao.valor == "Registrado"
+    # CNPJ extraído do <link rel="canonical"> — usado pelo CvmDocumentsProvider
+    # (Fase 4) pra casar Fatos Relevantes sem depender de match por nome.
+    assert resultado.valor.emissor_cnpj.valor == "07737623000190"
+    assert resultado.valor.emissor_cnpj.fonte == "SND"
 
 
 def test_fetch_market_data_sem_rede(tmp_path) -> None:

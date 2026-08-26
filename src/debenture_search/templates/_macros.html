@@ -10,3 +10,11 @@
   </div>
 </div>
 {% endmacro %}
+
+{% macro rotulo_documento(tipo) %}
+{%- if tipo.value == "fato_relevante" -%}Fato Relevante
+{%- elif tipo.value == "prospecto" -%}Prospecto
+{%- elif tipo.value == "escritura" -%}Escritura de Emissão
+{%- else -%}{{ tipo.value }}
+{%- endif -%}
+{% endmacro %}

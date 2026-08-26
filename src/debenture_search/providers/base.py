@@ -92,4 +92,12 @@ class EventsProvider(Provider, Protocol):
 
 @runtime_checkable
 class DocumentsProvider(Provider, Protocol):
-    def fetch_documents(self, ref: DebentureRef) -> ProviderResult[list[Document]]: ...
+    def fetch_documents(
+        self, ref: DebentureRef, emissor_cnpj: str | None
+    ) -> ProviderResult[list[Document]]:
+        """`emissor_cnpj` vem do CNPJ já resolvido pelas fontes de
+        características (ver DebentureAggregator.build_ficha) — casar
+        documentos regulatórios por CNPJ, não por nome de emissor (texto
+        livre, inconsistente entre fontes), é o que evita atribuir um
+        documento à empresa errada."""
+        ...
