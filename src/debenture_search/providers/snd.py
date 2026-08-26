@@ -152,12 +152,16 @@ class SndScraperProvider:
         try:
             html, _ = self._fetch_caracteristicas_html(codigo)
             debenture = _parse_caracteristicas_html(html, codigo_ativo=codigo.strip())
-            cnpj = _extrair_cnpj_do_canonical(html)
-            if cnpj:
-                # Já extraído de qualquer forma pra alimentar a consulta de
-                # preços — só faltava expor no modelo (usado também pelo
-                # CvmDocumentsProvider pra casar documentos por CNPJ).
+            info_canonical = _extrair_info_canonical(html)
+            if info_canonical:
+                cnpj, numero_emissao = info_canonical
+                # CNPJ já era extraído de qualquer forma pra alimentar a
+                # consulta de preços — só faltava expor no modelo (usado
+                # também pelo CvmDocumentsProvider pra casar documentos por
+                # CNPJ). Número da emissão não aparece em texto simples em
+                # lugar nenhum da página, só nesse link — mesma fonte.
                 debenture.emissor_cnpj = SourcedValue(cnpj, fonte=FONTE)
+                debenture.numero_emissao = SourcedValue(int(numero_emissao), fonte=FONTE)
             self._marcar_registro_excluido(debenture, codigo)
             self._marcar_vencimento_antecipado(debenture, codigo)
             self._marcar_inadimplencia(debenture, codigo)
@@ -505,13 +509,23 @@ def _extrair_campo_texto(html: str, label_sem_acento: str) -> str | None:
     return _campo(_flatten(html), label_sem_acento)
 
 
+_CANONICAL_RE = re.compile(r"debentures/emissores/(\d{14})/emissoes/(\d+)/series/")
+
+
+def _extrair_info_canonical(html: str) -> tuple[str, str] | None:
+    """CNPJ do emissor e número da emissão — nenhum dos dois aparece em
+    texto simples em lugar nenhum da página, só embutidos no
+    <link rel="canonical"> que aponta pro ANBIMA Data (formato
+    .../emissores/<cnpj>/emissoes/<numero>/series/<codigo>/...) — é só
+    leitura de um dado que o próprio SND publica na sua página, não é uma
+    chamada ao ANBIMA. Retorna (cnpj, numero_emissao)."""
+    m = _CANONICAL_RE.search(html)
+    return (m.group(1), m.group(2)) if m else None
+
+
 def _extrair_cnpj_do_canonical(html: str) -> str | None:
-    """O CNPJ do emissor não aparece em texto simples na página, só embutido
-    no <link rel="canonical"> que aponta pro ANBIMA Data — é só leitura de
-    um dado que o próprio SND publica na sua página, não é uma chamada ao
-    ANBIMA."""
-    m = re.search(r"debentures/emissores/(\d{14})/emissoes", html)
-    return m.group(1) if m else None
+    info = _extrair_info_canonical(html)
+    return info[0] if info else None
 
 
 def _parse_decimal_br(raw: str) -> float | None:
