@@ -226,6 +226,29 @@ export ANBIMA_CLIENT_SECRET="..."
 Por padrão os dados locais (cache e overrides manuais) ficam em
 `~/.debenture_search/`. Configurável via `DEBENTURE_SEARCH_DATA_DIR`.
 
+## Hospedagem (Render)
+
+O projeto foi desenhado como ferramenta de uso pessoal, sem sistema de
+contas — ao colocar a UI web numa URL pública, `WEB_AUTH_USERNAME` +
+`WEB_AUTH_PASSWORD` (ver `web.py`/`config.py`) ligam um gate de HTTP
+Basic Auth simples na frente de toda a aplicação; sem as duas env vars a
+UI continua aberta (comportamento de desenvolvimento local, sem mudança).
+
+`render.yaml` já descreve o serviço pro [Render](https://render.com)
+(plano gratuito): conectar o repositório lá detecta o blueprint sozinho.
+Nada de credencial fica no arquivo — `ANBIMA_CLIENT_ID`,
+`ANBIMA_CLIENT_SECRET`, `WEB_AUTH_USERNAME` e `WEB_AUTH_PASSWORD` são
+pedidos pelo próprio Render na hora do deploy e ficam só no painel dele
+(`sync: false` no blueprint).
+
+Limitação conhecida do plano gratuito: sem disco persistente, então o
+cache SQLite e os overrides manuais (`ManualInputProvider`) são perdidos
+a cada redeploy/reinício da instância — para uso pessoal ocasional isso é
+aceitável (o cache só reconsulta o SND; overrides manuais precisariam ser
+recadastrados). Resolver isso definitivamente exigiria um disco
+persistente (plano pago) ou trocar o SQLite local por um banco externo —
+fora do escopo por ora.
+
 ## Plano de fases
 
 1. **Fase 1 (concluída)** — modelo de dados, interfaces de provider, SND

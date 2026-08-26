@@ -158,3 +158,35 @@ def test_manual_submit_persiste_e_ficha_reflete_override(tmp_path, monkeypatch) 
     assert "Fitch, 03/2026" in r.text
     # e o dado automático que a fonte manual não sobrescreveu continua lá
     assert "DI + 4,3500%" in r.text
+
+
+def test_sem_env_vars_de_auth_ui_fica_aberta(monkeypatch) -> None:
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_USERNAME", None)
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_PASSWORD", None)
+    client = _client_com_refs([])
+    r = client.get("/")
+    assert r.status_code == 200
+
+
+def test_com_env_vars_de_auth_bloqueia_sem_credencial(monkeypatch) -> None:
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_USERNAME", "admin")
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_PASSWORD", "segredo")
+    client = _client_com_refs([])
+    r = client.get("/")
+    assert r.status_code == 401
+
+
+def test_com_env_vars_de_auth_bloqueia_credencial_errada(monkeypatch) -> None:
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_USERNAME", "admin")
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_PASSWORD", "segredo")
+    client = _client_com_refs([])
+    r = client.get("/", auth=("admin", "senha-errada"))
+    assert r.status_code == 401
+
+
+def test_com_env_vars_de_auth_libera_credencial_correta(monkeypatch) -> None:
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_USERNAME", "admin")
+    monkeypatch.setattr("debenture_search.config.WEB_AUTH_PASSWORD", "segredo")
+    client = _client_com_refs([])
+    r = client.get("/", auth=("admin", "segredo"))
+    assert r.status_code == 200

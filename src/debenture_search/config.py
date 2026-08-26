@@ -18,3 +18,10 @@ ANBIMA_CLIENT_SECRET = os.environ.get("ANBIMA_CLIENT_SECRET")
 # "sandbox" (padrão, seguro) ou "producao" — troque só se o app tiver
 # assinatura de produção aprovada para o pacote Preços e Índices.
 ANBIMA_AMBIENTE = os.environ.get("ANBIMA_AMBIENTE", "sandbox")
+
+# HTTP Basic Auth para a UI web, pensado pra hospedagem pública (ex.:
+# Render) de um projeto de uso pessoal — sem as duas env vars a UI fica
+# aberta (comportamento de desenvolvimento local, sem mudança). NUNCA
+# hardcodear valores reais aqui nem no repositório.
+WEB_AUTH_USERNAME = os.environ.get("WEB_AUTH_USERNAME")
+WEB_AUTH_PASSWORD = os.environ.get("WEB_AUTH_PASSWORD")

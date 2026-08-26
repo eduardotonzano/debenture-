@@ -9,15 +9,18 @@ providers fake, sem precisar de rede nem de um banco de cache real.
 
 from __future__ import annotations
 
+import secrets
 import urllib.parse
 from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from fastapi import FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
+from debenture_search import config
 from debenture_search.aggregator import Ambiguous, DebentureAggregator
 from debenture_search.compose import build_aggregator
 from debenture_search.config import MANUAL_INPUT_DB_PATH
@@ -27,6 +30,34 @@ from debenture_search.query_parsing import infer_query
 from debenture_search.ref_params import ref_from_params, ref_to_params
 
 AggregatorFactory = Callable[[], DebentureAggregator]
+
+_security = HTTPBasic(auto_error=False)
+
+
+def _exigir_autenticacao(
+    credenciais: HTTPBasicCredentials | None = Depends(_security),
+) -> None:
+    """Gate opcional de HTTP Basic Auth pra hospedagem pública.
+
+    Lê `config.WEB_AUTH_USERNAME`/`WEB_AUTH_PASSWORD` (não os importa por
+    nome) pra ficar sensível a monkeypatch em teste e a mudança de env var
+    em runtime — sem as duas configuradas, a UI fica aberta (uso local).
+    """
+    if not (config.WEB_AUTH_USERNAME and config.WEB_AUTH_PASSWORD):
+        return
+
+    usuario_ok = credenciais is not None and secrets.compare_digest(
+        credenciais.username, config.WEB_AUTH_USERNAME
+    )
+    senha_ok = credenciais is not None and secrets.compare_digest(
+        credenciais.password, config.WEB_AUTH_PASSWORD
+    )
+    if not (usuario_ok and senha_ok):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Credenciais inválidas",
+            headers={"WWW-Authenticate": "Basic"},
+        )
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -52,7 +83,10 @@ def _fmt(valor: object) -> str:
 
 
 def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> FastAPI:
-    app = FastAPI(title="Motor de Busca de Debêntures")
+    app = FastAPI(
+        title="Motor de Busca de Debêntures",
+        dependencies=[Depends(_exigir_autenticacao)],
+    )
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["urlencode_params"] = _urlencode_params
     templates.env.globals["fmt"] = _fmt

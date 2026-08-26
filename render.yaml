@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: debenture-search
+    runtime: python
+    plan: free
+    buildCommand: pip install -e .
+    startCommand: uvicorn debenture_search.web:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Sem valor aqui de propósito (sync: false) — o Render pede pra
+      # preencher na hora do deploy e guarda só no painel dele, nunca no
+      # repositório. Deixar em branco = fonte ANBIMA/autenticação da UI
+      # ficam desligadas sem quebrar o resto do sistema.
+      - key: ANBIMA_CLIENT_ID
+        sync: false
+      - key: ANBIMA_CLIENT_SECRET
+        sync: false
+      - key: WEB_AUTH_USERNAME
+        sync: false
+      - key: WEB_AUTH_PASSWORD
+        sync: false
