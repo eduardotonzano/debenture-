@@ -103,6 +103,32 @@ def test_fetch_characteristics_sem_rede(tmp_path) -> None:
     assert resultado.valor.numero_emissao.valor == 2
 
 
+def test_resolver_cnpj_por_nome_emissor_fallback(tmp_path) -> None:
+    """Nem toda debênture tem <link rel="canonical"> (confirmado num caso
+    real: Americanas/AMERE2) — o fallback busca na lista estática de
+    emissores, tolerando um sufixo extra no nome (ex.: "- EM RECUPERACAO
+    JUDICIAL") que a página de características às vezes acrescenta."""
+    cache = SqliteCache(tmp_path / "cache.sqlite3")
+    _seed_cache(cache)
+    provider = SndScraperProvider(cache=cache)
+
+    cnpj = provider._resolver_cnpj_por_nome_emissor(
+        "A BODYTECH PARTICIPACOES S.A. - EM RECUPERACAO JUDICIAL"
+    )
+
+    assert cnpj == "07737623000190"
+
+
+def test_resolver_cnpj_por_nome_emissor_sem_match_fica_none(tmp_path) -> None:
+    cache = SqliteCache(tmp_path / "cache.sqlite3")
+    _seed_cache(cache)
+    provider = SndScraperProvider(cache=cache)
+
+    assert provider._resolver_cnpj_por_nome_emissor("EMPRESA QUE NAO EXISTE NA LISTA S.A.") is None
+    assert provider._resolver_cnpj_por_nome_emissor(None) is None
+    assert provider._resolver_cnpj_por_nome_emissor("") is None
+
+
 def test_fetch_market_data_sem_rede(tmp_path) -> None:
     cache = SqliteCache(tmp_path / "cache.sqlite3")
     _seed_cache(cache)

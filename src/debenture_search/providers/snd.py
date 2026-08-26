@@ -162,6 +162,18 @@ class SndScraperProvider:
                 # lugar nenhum da página, só nesse link — mesma fonte.
                 debenture.emissor_cnpj = SourcedValue(cnpj, fonte=FONTE)
                 debenture.numero_emissao = SourcedValue(int(numero_emissao), fonte=FONTE)
+            else:
+                # Nem toda debênture tem esse link (parece depender de
+                # mapeamento pro ANBIMA Data) — confirmado num caso real
+                # (Americanas, AMERE2): sem "canonical" nenhum na página.
+                # Cai pra lista estática nome->CNPJ (mesma que resolve
+                # busca por emissor). Número da emissão não tem fonte
+                # alternativa confiável — fica indisponível de propósito.
+                cnpj_fallback = self._resolver_cnpj_por_nome_emissor(debenture.emissor_nome.valor)
+                if cnpj_fallback:
+                    debenture.emissor_cnpj = SourcedValue(
+                        cnpj_fallback, fonte=f"{FONTE} (lista de emissores)"
+                    )
             self._marcar_registro_excluido(debenture, codigo)
             self._marcar_vencimento_antecipado(debenture, codigo)
             self._marcar_inadimplencia(debenture, codigo)
@@ -343,9 +355,12 @@ class SndScraperProvider:
             caract_html, resolved_ref = self._fetch_caracteristicas_html(codigo)
             cnpj = _extrair_cnpj_do_canonical(caract_html)
             if cnpj is None:
+                cnpj = self._resolver_cnpj_por_nome_emissor(resolved_ref.nome_emissor)
+            if cnpj is None:
                 raise SndParsingError(
-                    "CNPJ do emissor não encontrado no link canônico da página "
-                    "de características — necessário para consultar preços."
+                    "CNPJ do emissor não encontrado (nem no link canônico da "
+                    "página de características, nem na lista de emissores) — "
+                    "necessário para consultar preços."
                 )
             isin = resolved_ref.isin or ""
             html = self._post_cached_or_fetch(
@@ -368,6 +383,28 @@ class SndScraperProvider:
             return ProviderResult.ok(self.name, [])
         except Exception as exc:  # noqa: BLE001
             return ProviderResult.falha(self.name, str(exc))
+
+    def _resolver_cnpj_por_nome_emissor(self, nome_emissor: str | None) -> str | None:
+        """Fallback pra quando a página de características não tem
+        <link rel="canonical"> — confirmado que isso acontece de verdade
+        (ex.: Americanas/AMERE2), aparentemente pra debêntures sem
+        mapeamento pro ANBIMA Data. Reusa a mesma lista estática
+        nome->CNPJ que já sustenta `_search_por_emissor` (Fase 1) — mesmo
+        princípio de match (substring normalizado, sem acento/caixa). Só
+        aceita quando há exatamente UM candidato: ambiguidade nunca vira
+        um chute, fica indisponível."""
+        if not nome_emissor:
+            return None
+        html = self._get_cached_or_fetch(
+            "emissores_lista", "", _Endpoints.ESTOQUE_FORM, params=None
+        )
+        alvo = _normalize(nome_emissor)
+        candidatos = {
+            cnpj
+            for cnpj, nome_lista in _parse_emissor_options(html)
+            if _normalize(nome_lista) and _normalize(nome_lista) in alvo
+        }
+        return next(iter(candidatos)) if len(candidatos) == 1 else None
 
     def close(self) -> None:
         self._http.close()

@@ -129,7 +129,7 @@ O que está implementado e testado:
   aqui, não escondido. Prospecto e Escritura de Emissão continuam
   indisponíveis — vêm de outro sistema da CVM (documentos de oferta
   pública), ainda não investigado.
-- 71 testes automatizados (parsing + integração dos providers + cache +
+- 73 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
@@ -162,6 +162,19 @@ documentação oficial — o SND não expõe uma). O que está confirmado:
   aposta best-effort, mas isso não foi confirmado contra o site real —
   pode simplesmente não funcionar, retornando lista vazia (comportamento
   honesto, não seria erro).
+- **CNPJ do emissor e número da emissão nem sempre vêm do
+  `<link rel="canonical">`**: esses dois campos são extraídos de um link
+  técnico que o SND embute na página apontando pro ANBIMA Data (não
+  aparecem em texto simples em lugar nenhum). Confirmado num caso real
+  (Americanas, `AMERE2`) que **nem toda debênture tem esse link** —
+  aparentemente depende de a debênture estar mapeada no ANBIMA Data.
+  Quando falta, `emissor_cnpj` cai pra um fallback (match por nome contra
+  a mesma lista estática de emissores usada na busca por nome, só quando
+  há exatamente um candidato — nunca um chute em caso de ambiguidade);
+  `numero_emissao` não tem fonte alternativa conhecida e fica
+  "indisponível" nesses casos. Isso também afetava
+  `MarketDataProvider.fetch_market_data` (que também precisa do CNPJ pra
+  consultar preços) — mesma correção resolveu os dois.
 - **"Não encontrado"**: a heurística usada (`_caracteristicas_encontrou_ativo`)
   não foi validada contra uma página real de "ativo não existe", porque não
   capturamos uma — está documentada como best-effort no código.
