@@ -37,6 +37,9 @@ convenção padrão de capitalização do CDI no mercado brasileiro.
 from __future__ import annotations
 
 import re
+from datetime import date
+
+from debenture_search.models import TipoEvento
 
 _DIAS_UTEIS_ANO = 252
 
@@ -119,3 +122,64 @@ def calcular_pu_par(
         else fator_juros_percentual(taxas_di_aa, percentual_di)
     )
     return vna * fator_juros
+
+
+def calcular_serie_pu_par(
+    vne: float,
+    data_emissao: date,
+    eventos: list[tuple[date, TipoEvento, float | None]],
+    taxas_di_por_dia: dict[date, float],
+    datas_referencia: list[date],
+    *,
+    spread_pct_aa: float | None = None,
+    percentual_di: float | None = None,
+) -> dict[date, float | None]:
+    """PU Par histórico pra uma lista de datas de referência, reconstruindo
+    VNA e o início de cada período de capitalização a partir do histórico
+    real de eventos (ver `providers/snd.py::_fetch_eventos_pagamento`, o
+    "PU de Eventos" do SND — dados JÁ PAGOS, não uma projeção).
+
+    Pra cada data de referência:
+    - VNA = VNE − soma dos valores de Amortização REALMENTE pagos (o valor
+      que o `PU de Evento` do SND já publica, nunca recalculado a partir
+      do percentual contratual) em eventos até essa data (inclusive);
+    - o início do período de capitalização é a data do último evento de
+      Juros até essa data (inclusive), ou `data_emissao` se ainda não
+      houve nenhum;
+    - a Taxa DI de cada dia útil estritamente entre esse início e a data
+      de referência (inclusive) vem de `taxas_di_por_dia` (ver
+      `providers/bcb_di.py`).
+
+    Uma data de referência sem NENHUM dado de Taxa DI no período (e que
+    precisaria de pelo menos um) fica com valor `None` — nunca acumulada
+    com um buraco no meio, que produziria um número plausível mas errado.
+    """
+    eventos_ordenados = sorted(eventos, key=lambda e: e[0])
+    resultado: dict[date, float | None] = {}
+
+    for data_ref in datas_referencia:
+        eventos_ate = [e for e in eventos_ordenados if e[0] <= data_ref]
+        amortizado = sum(
+            valor
+            for _data, tipo, valor in eventos_ate
+            if tipo is TipoEvento.AMORTIZACAO and valor is not None
+        )
+        vna = vne - amortizado
+
+        datas_juros_ate = [data for data, tipo, _valor in eventos_ate if tipo is TipoEvento.JUROS]
+        inicio_acumulo = max(datas_juros_ate) if datas_juros_ate else data_emissao
+
+        dias_uteis = sorted(d for d in taxas_di_por_dia if inicio_acumulo < d <= data_ref)
+        if inicio_acumulo < data_ref and not dias_uteis:
+            resultado[data_ref] = None
+            continue
+
+        taxas = [taxas_di_por_dia[d] for d in dias_uteis]
+        try:
+            resultado[data_ref] = calcular_pu_par(
+                vna, taxas, spread_pct_aa=spread_pct_aa, percentual_di=percentual_di
+            )
+        except ValueError:
+            resultado[data_ref] = None
+
+    return resultado

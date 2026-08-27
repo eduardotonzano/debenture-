@@ -19,6 +19,7 @@ from debenture_search.providers.base import (
     MarketDataProvider,
     SearchProvider,
 )
+from debenture_search.pu_par_calculator import PuParCalculator
 
 # Campos de Debenture, na ordem em que os providers de características são
 # consultados (menor índice = menor precedência, sobrescrito pelos que vêm
@@ -46,6 +47,7 @@ class DebentureAggregator:
         market_data_providers: list[MarketDataProvider] | None = None,
         events_providers: list[EventsProvider] | None = None,
         documents_providers: list[DocumentsProvider] | None = None,
+        pu_par_calculator: PuParCalculator | None = None,
     ) -> None:
         # Precedência = ordem da lista. Documentar isso na chamada de
         # composição (ex.: main.py) é responsabilidade de quem monta o
@@ -59,6 +61,7 @@ class DebentureAggregator:
         ]
         self.events_providers = [p for p in (events_providers or []) if p.is_available()]
         self.documents_providers = [p for p in (documents_providers or []) if p.is_available()]
+        self.pu_par_calculator = pu_par_calculator
 
     def resolve(self, query: SearchQuery) -> list[DebentureRef] | Ambiguous:
         candidatos: list[DebentureRef] = []
@@ -100,6 +103,17 @@ class DebentureAggregator:
             resultado = provider.fetch_documents(ref, cnpj_resolvido)
             if resultado.sucesso and resultado.valor:
                 debenture.documentos.extend(resultado.valor)
+
+        # Último passo, de propósito: precisa de características (VNE,
+        # taxa, data de emissão), preços (pra saber quais datas faltam) e
+        # eventos (calendário de pagamento) já mesclados — ver
+        # pu_par_calculator.py. Opcional (fica None em uso sem BCB
+        # configurado, ex.: testes) e nunca derruba a ficha se falhar.
+        if self.pu_par_calculator is not None:
+            try:
+                self.pu_par_calculator.preencher(debenture)
+            except Exception:  # noqa: BLE001
+                pass
 
         return debenture
 

@@ -82,6 +82,7 @@ class _Endpoints:
         f"{BASE}/consultaadados/emissoesdedebentures/registrosexcluidos_r.asp"
     )
     REPACTUACOES_RESULT = f"{BASE}/consultaadados/emissoesdedebentures/repactuacoes_r.asp"
+    PU_DE_EVENTOS_RESULT = f"{BASE}/consultaadados/eventosfinanceiros/pudeeventos_r.asp"
     VENCIMENTOS_ANTECIPADOS_RESULT = (
         f"{BASE}/consultaadados/emissoesdedebentures/vencimentosantecipados_r.asp"
     )
@@ -310,7 +311,65 @@ class SndScraperProvider:
             for data, codigo_ativo, _emissor, deliberacao in repactuacoes
             if codigo_ativo.strip().upper() == alvo
         ]
+
+        # Histórico de pagamento de Juros/Amortização — não deriva de
+        # nenhuma fonte já usada aqui, é o "PU de Eventos" do SND (só
+        # descoberto na Fase 5, ao investigar como calcular o PU Par: a
+        # fórmula da ANBIMA precisa da data do último pagamento de juros e
+        # do valor efetivamente amortizado em cada evento). Falha nesta
+        # busca extra não derruba as Repactuações já obtidas acima.
+        try:
+            eventos.extend(self._fetch_eventos_pagamento(ref, codigo))
+        except Exception:  # noqa: BLE001
+            pass
+
         return ProviderResult.ok(self.name, eventos)
+
+    def _fetch_eventos_pagamento(self, ref: DebentureRef, codigo: str) -> list[Event]:
+        """Busca `PU de Eventos` — histórico de Juros/Amortização já
+        efetivamente pagos, com data e valor real (não uma projeção). É a
+        fonte do calendário de pagamento que falta pro cálculo do PU Par
+        (ver pu_par.py): a fórmula acumula a Taxa DI desde o último
+        pagamento de juros, e reduz o VNA pelo valor real amortizado em
+        cada evento — nunca recalculado a partir do percentual contratual
+        (o valor que o próprio SND publica já é o valor real pago)."""
+        caract_html, resolved_ref = self._fetch_caracteristicas_html(codigo)
+        cnpj = _extrair_cnpj_do_canonical(caract_html)
+        if cnpj is None:
+            cnpj = self._resolver_cnpj_por_nome_emissor(resolved_ref.nome_emissor)
+        if cnpj is None:
+            return []
+
+        html = self._post_cached_or_fetch(
+            "pudeeventos", codigo,
+            _Endpoints.PU_DE_EVENTOS_RESULT,
+            data={
+                "op_exc": "Nada",
+                "emissor": cnpj,
+                "ativo": codigo.strip(),
+                "dt_ini": "",
+                "dt_fim": "",
+                "evento": "",
+                "Submit.x": "1",
+                "Submit.y": "1",
+            },
+        )
+        alvo = codigo.strip().upper()
+        eventos = []
+        for data_pagamento, codigo_ativo, tipo, valor, situacao, liquidacao in _parse_pu_de_eventos_html(html):
+            if codigo_ativo.strip().upper() != alvo or tipo is None:
+                continue
+            detalhe = " / ".join(p for p in (situacao, liquidacao) if p)
+            eventos.append(
+                Event(
+                    debenture_ref=ref,
+                    tipo=tipo,
+                    data_prevista=data_pagamento,
+                    valor=SourcedValue(valor, fonte=FONTE),
+                    fonte=f"{FONTE} (PU de Eventos — {detalhe})" if detalhe else f"{FONTE} (PU de Eventos)",
+                )
+            )
+        return eventos
 
     def _fetch_repactuacoes(self) -> list[tuple[date, str, str, str | None]]:
         """Lista GLOBAL de repactuações históricas — busca uma única vez,
@@ -615,6 +674,13 @@ def _parse_caracteristicas_html(html: str, codigo_ativo: str) -> Debenture:
     )
     valor_nominal = valor_nominal_m.group(1).strip() if valor_nominal_m else None
 
+    # VNE (valor nominal na data de EMISSÃO, constante) — rótulo separado de
+    # "Nominal em {data}" acima (que é o nominal já atualizado/amortizado).
+    # O ':' duplicado no regex cobre a acentuação corrompida real da página
+    # ("Nominal na Emissï¿½o: : R$ ...") sem depender de decodificar o acento.
+    vne_m = re.search(r"Nominal na Emiss[^:\n]{0,10}:\s*:?\s*\n?\s*R\$\s*([\d.,]+)", texto)
+    valor_nominal_emissao = vne_m.group(1).strip() if vne_m else None
+
     rating = _campo(texto, "Classifica")
     if rating and not re.search(r"[A-Za-z0-9]", rating):
         rating = None
@@ -633,6 +699,7 @@ def _parse_caracteristicas_html(html: str, codigo_ativo: str) -> Debenture:
         quantidade_emitida=SourcedValue(_campo(texto, "Emitida"), fonte=FONTE),
         quantidade_mercado=SourcedValue(_campo(texto, "Mercado"), fonte=FONTE),
         valor_nominal_unitario=SourcedValue(valor_nominal, fonte=FONTE),
+        valor_nominal_emissao=SourcedValue(valor_nominal_emissao, fonte=FONTE),
         situacao=SourcedValue(_map_situacao(_campo(texto, "Situa")), fonte=FONTE),
         rating=SourcedValue(rating, fonte=FONTE),
         forma=SourcedValue(_campo(texto, "Forma"), fonte=FONTE),
@@ -739,6 +806,56 @@ def _parse_repactuacoes_html(html: str) -> list[tuple[date, str, str, str | None
         emissor = emissor_e_codigo.rsplit(f" - {codigo_ativo}", 1)[0]
         deliberacao = tds[3].get_text(strip=True) or None
         resultado.append((data_repactuacao, codigo_ativo, emissor, deliberacao))
+    return resultado
+
+
+# -- parsing: pudeeventos_r.asp ---------------------------------------------
+
+
+def _mapear_tipo_evento_pagamento(evento_texto: str) -> TipoEvento | None:
+    """Casa só pelo prefixo sem acento (mesmo motivo de `_campo`): o HAR
+    exportado pelo navegador corrompe 'Amortização' em bytes inválidos
+    (vira 'Amortiza' + replacement chars + 'o'), mas o prefixo 'AMORTIZA'
+    sobrevive tanto nesse caso quanto numa decodificação correta em
+    produção. Tipo desconhecido devolve None — nunca vira um evento com
+    tipo adivinhado."""
+    normalizado = evento_texto.strip().upper()
+    if normalizado.startswith("JUROS"):
+        return TipoEvento.JUROS
+    if normalizado.startswith("AMORTIZA"):
+        return TipoEvento.AMORTIZACAO
+    return None
+
+
+def _parse_pu_de_eventos_html(
+    html: str,
+) -> list[tuple[date, str, TipoEvento | None, float | None, str | None, str | None]]:
+    """Lista GLOBAL de eventos de pagamento já ocorridos (Juros/Amortização),
+    com o valor REAL pago por unidade (nunca recalculado): Data do
+    Pagamento | Ativo | Evento | PU de Evento | Situação | Liquidação —
+    confirmado contra HTML real (tests/fixtures/snd_pudeeventos_r.html,
+    ativo BODY12, capturado via HAR pelo usuário)."""
+    soup = BeautifulSoup(html, "lxml")
+    resultado: list[tuple[date, str, TipoEvento | None, float | None, str | None, str | None]] = []
+    for tr in soup.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) != 7:
+            continue
+        textos = [td.get_text(strip=True) for td in tds]
+        data_str, codigo_ativo, evento_texto, valor_str, _spacer, situacao, liquidacao = textos
+        data_pagamento = _parse_data_br(data_str)
+        if data_pagamento is None or not codigo_ativo:
+            continue
+        resultado.append(
+            (
+                data_pagamento,
+                codigo_ativo,
+                _mapear_tipo_evento_pagamento(evento_texto),
+                _parse_decimal_br(valor_str),
+                situacao or None,
+                liquidacao or None,
+            )
+        )
     return resultado
 
 

@@ -8,10 +8,14 @@ não só reproduzindo a mesma conta do código sob teste).
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
+from debenture_search.models import TipoEvento
 from debenture_search.pu_par import (
     calcular_pu_par,
+    calcular_serie_pu_par,
     fator_di_diario,
     fator_juros_percentual,
     fator_juros_spread,
@@ -117,3 +121,109 @@ def test_parse_spread_di_aa_formato_reconhecido(texto, esperado):
 )
 def test_parse_spread_di_aa_formato_nao_reconhecido_e_none(texto):
     assert parse_spread_di_aa(texto) is None
+
+
+def _taxas_dict(dias: list[int], taxa: float = 13.0) -> dict[date, float]:
+    return {date(2020, 1, dia): taxa for dia in dias}
+
+
+def test_calcular_serie_pu_par_sem_eventos_acumula_desde_a_emissao():
+    taxas = _taxas_dict([2, 3, 4, 5])
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=[],
+        taxas_di_por_dia=taxas,
+        datas_referencia=[date(2020, 1, 5)],
+        spread_pct_aa=4.0,
+    )
+    esperado = calcular_pu_par(10_000.0, [13.0, 13.0, 13.0, 13.0], spread_pct_aa=4.0)
+    assert serie[date(2020, 1, 5)] == pytest.approx(esperado)
+
+
+def test_calcular_serie_pu_par_reinicia_acumulo_no_ultimo_evento_de_juros():
+    taxas = _taxas_dict(range(2, 11))
+    eventos = [(date(2020, 1, 5), TipoEvento.JUROS, 50.0)]
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=eventos,
+        taxas_di_por_dia=taxas,
+        datas_referencia=[date(2020, 1, 8)],
+        spread_pct_aa=4.0,
+    )
+    # Só os dias ESTRITAMENTE depois do último Juros (05) até 08, inclusive.
+    esperado = calcular_pu_par(10_000.0, [13.0, 13.0, 13.0], spread_pct_aa=4.0)
+    assert serie[date(2020, 1, 8)] == pytest.approx(esperado)
+
+
+def test_calcular_serie_pu_par_amortizacao_reduz_vna():
+    taxas = _taxas_dict(range(2, 11))
+    eventos = [(date(2020, 1, 5), TipoEvento.AMORTIZACAO, 500.0)]
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=eventos,
+        taxas_di_por_dia=taxas,
+        datas_referencia=[date(2020, 1, 10)],
+        spread_pct_aa=4.0,
+    )
+    taxas_periodo = [13.0] * 9  # dias 2..10, nenhum evento de Juros ainda
+    esperado = calcular_pu_par(9_500.0, taxas_periodo, spread_pct_aa=4.0)
+    assert serie[date(2020, 1, 10)] == pytest.approx(esperado)
+
+
+def test_calcular_serie_pu_par_amortizacao_futura_nao_conta():
+    taxas = _taxas_dict(range(2, 6))
+    eventos = [(date(2020, 1, 20), TipoEvento.AMORTIZACAO, 500.0)]
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=eventos,
+        taxas_di_por_dia=taxas,
+        datas_referencia=[date(2020, 1, 5)],
+        spread_pct_aa=4.0,
+    )
+    esperado = calcular_pu_par(10_000.0, [13.0] * 4, spread_pct_aa=4.0)
+    assert serie[date(2020, 1, 5)] == pytest.approx(esperado)
+
+
+def test_calcular_serie_pu_par_sem_dado_de_di_no_periodo_fica_indisponivel():
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=[],
+        taxas_di_por_dia={},
+        datas_referencia=[date(2020, 1, 10)],
+        spread_pct_aa=4.0,
+    )
+    assert serie[date(2020, 1, 10)] is None
+
+
+def test_calcular_serie_pu_par_data_referencia_igual_ao_inicio_do_acumulo():
+    # Zero dias úteis decorridos é uma resposta válida (fator neutro + o
+    # spread), não um "buraco de dado" — não deve virar None.
+    eventos = [(date(2020, 1, 5), TipoEvento.JUROS, 50.0)]
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=eventos,
+        taxas_di_por_dia={},
+        datas_referencia=[date(2020, 1, 5)],
+        spread_pct_aa=4.0,
+    )
+    assert serie[date(2020, 1, 5)] == pytest.approx(10_400.0)
+
+
+def test_calcular_serie_pu_par_percentual_di():
+    taxas = _taxas_dict([2, 3, 4, 5])
+    serie = calcular_serie_pu_par(
+        vne=10_000.0,
+        data_emissao=date(2020, 1, 1),
+        eventos=[],
+        taxas_di_por_dia=taxas,
+        datas_referencia=[date(2020, 1, 5)],
+        percentual_di=108.0,
+    )
+    esperado = calcular_pu_par(10_000.0, [13.0, 13.0, 13.0, 13.0], percentual_di=108.0)
+    assert serie[date(2020, 1, 5)] == pytest.approx(esperado)

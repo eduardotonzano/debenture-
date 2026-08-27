@@ -5,7 +5,7 @@ nome da empresa emissora — retorna uma ficha completa do ativo (não um
 dashboard de múltiplos ativos), com cada campo marcado com sua fonte ou
 "indisponível". Uso interno/pessoal, sem autenticação multiusuário.
 
-## Status (Fase 1 + Fase 2 + Fase 3 + Fase 4 concluídas; Fase 5 em andamento)
+## Status (Fase 1 + Fase 2 + Fase 3 + Fase 4 + Fase 5 concluídas — Fase 5 com um passo pendente de validação real, ver abaixo)
 
 O que está implementado e testado:
 
@@ -156,15 +156,16 @@ O que está implementado e testado:
   (`static/vendor/`, servidos pela própria aplicação via `StaticFiles`)
   em vez de CDN externo — testado que evita depender de domínio de
   terceiros pro gráfico renderizar.
-- 107 testes automatizados (parsing + integração dos providers + cache +
+- 131 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web + motor de cálculo do PU Par), todos rodam sem rede.
 
-### Fase 5 (em andamento): motor de cálculo do PU Par
+### Fase 5: motor de cálculo do PU Par
 
 O `pu_par` que a ANBIMA Feed devolve pronto só existe pra "Debêntures+"
 (ver acima) — pra debêntures normais só temos o percentual. Em vez de
 inventar o valor absoluto a partir do percentual (matematicamente errado,
-ver ressalva acima), fomos atrás da fórmula oficial:
+ver ressalva acima), fomos atrás da fórmula oficial e montamos o pipeline
+inteiro:
 
 - **Fórmula confirmada por fonte primária**: ANBIMA, "Metodologias ANBIMA
   de Precificação" (dez/2023, PDF público —
@@ -179,39 +180,62 @@ ver ressalva acima), fomos atrás da fórmula oficial:
   visível na seção de CRA do mesmo documento (página 74), com a mesma
   definição textual de "Taxa DI" — recuperado por conferência cruzada
   dentro do próprio PDF, não por suposição externa. Implementado em
-  `pu_par.py`, testado com invariantes matemáticos (12 testes, sem rede).
+  `pu_par.py` (`calcular_pu_par`), testado com invariantes matemáticos.
 - **Fonte da Taxa DI histórica**: API pública do Banco Central (SGS —
   Sistema Gerenciador de Séries Temporais), série 12 ("Taxa de juros -
   CDI"), sem autenticação: `GET
   api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=...&dataFinal=...`.
   Contrato público, estável há mais de uma década (usado por bibliotecas
   abertas como `python-bcb`). Implementado em `providers/bcb_di.py`
-  (`BancoCentralDiProvider`), testado com http_client falso (13 testes).
+  (`BancoCentralDiProvider`), testado com http_client falso.
   **Ainda não validado por uma chamada real** — `bcb.gov.br` está
   bloqueado neste sandbox de desenvolvimento, mesma restrição que afetou
   SND/ANBIMA/CVM; precisa ser confirmado rodando fora daqui, igual já
   fizemos com a ANBIMA Feed.
-- **Gap real encontrado, ainda não resolvido**: a fórmula acumula a Taxa DI
-  *desde o último evento de pagamento de juros* — pra calcular isso pra
-  uma data de referência qualquer no passado, é preciso saber o
-  calendário real de cupom da debênture (datas de pagamento de juros já
-  ocorridas) e o VNA vigente em cada reset. Nenhuma fonte já integrada
-  nesse projeto expõe esse calendário — o SND só tem eventos de
-  Repactuação estruturados (`fetch_events`). Achamos duas páginas do SND
-  ainda não investigadas, em "Eventos Financeiros": `PU de Eventos`
-  (`consultaadados/eventosfinanceiros/pudeeventos_f.asp`) e `Agenda`
-  (`consultaadados/eventosfinanceiros/agenda_f.asp`) — parecem o lugar
-  certo pra isso, mas o contrato real (HTML dos formulários e do
-  resultado) ainda não foi capturado. Sem isso, não dá pra fechar a
-  integração ponta a ponta sem arriscar acumular a Taxa DI a partir de
-  uma data errada — o que produziria um PU Par plausível, mas incorreto.
-  Também falta: parsear o spread numérico de `Debenture.taxa` já tem
-  `parse_spread_di_aa()` (só reconhece o formato aditivo "DI + X%", que é
-  o único que o SND produz hoje — devolve `None`, nunca um palpite, pra
-  qualquer outro formato/indexador) — mas debêntures "percentual do DI"
-  (ex.: "120% do DI") não são distinguíveis das aditivas na extração atual
-  do SND (o site expõe indexador e número em campos separados, sem marcar
-  qual dos dois tipos de contrato é).
+- **Calendário de cupom real**: a fórmula acumula a Taxa DI *desde o
+  último evento de pagamento de juros* — descobrimos que o SND expõe
+  exatamente isso numa página nunca antes investigada, "PU de Eventos"
+  (`consultaadados/eventosfinanceiros/pudeeventos_f.asp`, capturada via
+  HAR pelo usuário pro ativo BODY12): data de pagamento, tipo (Juros ou
+  Amortização) e o **valor real já pago** por unidade — nunca uma
+  projeção. `SndScraperProvider._fetch_eventos_pagamento()` busca e
+  mapeia isso pra `Event` (`TipoEvento.JUROS`/`AMORTIZACAO`), juntado aos
+  eventos de Repactuação já existentes em `fetch_events()`.
+- **VNE**: a página de características do SND tem o campo "Nominal na
+  Emissão" (valor nominal na data de emissão, constante — diferente do
+  "Nominal em {data}" já usado, que é o nominal atualizado/amortizado) —
+  nunca tinha sido extraído. Novo campo `Debenture.valor_nominal_emissao`.
+- **Reconstrução do VNA histórico**: em vez de uma segunda fonte, o VNA
+  em qualquer data é `VNE − soma das Amortizações REALMENTE pagas até
+  essa data` (usando o valor que o próprio "PU de Eventos" publica, nunca
+  recalculado a partir do percentual de amortização contratual). Isso e o
+  cálculo do Fator de Juros pra uma lista de datas de referência estão em
+  `pu_par.py::calcular_serie_pu_par()`.
+- **Orquestração**: `pu_par_calculator.py` (`PuParCalculator`) é o passo
+  final do `DebentureAggregator.build_ficha()` — roda depois que
+  características, preços e eventos já foram todos mesclados (é o único
+  jeito de ter VNE + spread + calendário + preços que faltam ao mesmo
+  tempo). Só calcula quando TODOS os insumos existem: VNE, data de
+  emissão, um spread "DI + X%" reconhecível
+  (`pu_par.py::parse_spread_di_aa()` — só o formato aditivo, que é o
+  único que o SND produz hoje; qualquer outro indexador ou o formato
+  "percentual do DI" — que o SND não distingue do aditivo na extração
+  atual — fica de fora de propósito, nunca um palpite) e pelo menos uma
+  data de preço faltando `pu_par`. Falha de rede do BCB (ou qualquer
+  outra exceção) nunca derruba a ficha — o campo simplesmente continua
+  indisponível. Fonte exibida: "Calculado (fórmula ANBIMA seção 25.4.1 +
+  BCB SGS série 12)", nunca confundida com o `pu_par` real vindo da
+  ANBIMA Debêntures+ (que nunca é sobrescrito).
+- **Gráfico**: terceira linha tracejada "PU Par" no gráfico de preços da
+  ficha, ao lado de PU médio negociado (SND) e PU indicativo (ANBIMA) —
+  só aparece quando existe pelo menos um ponto calculado ou vindo da
+  ANBIMA Debêntures+.
+- **O que ainda falta validar de verdade**: como toda fonte externa nova
+  neste projeto, a chamada real ao BCB (bloqueada neste sandbox) precisa
+  ser confirmada rodando fora daqui — mesmo processo já usado pra ANBIMA
+  Feed (setar nada de credencial, já que a API do BCB é aberta, e rodar
+  a busca de uma debênture DI de verdade comparando o PU Par calculado
+  contra o que a ANBIMA Data mostra pra mesma data).
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
 a heurística de "isso parece um código de ativo?" na busca (usada pra

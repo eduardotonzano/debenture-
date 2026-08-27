@@ -124,3 +124,45 @@ def test_campo_sem_nenhuma_fonte_fica_indisponivel() -> None:
     ficha = aggregator.build_ficha(REF)
     assert ficha.rating.disponivel is False
     assert ficha.rating.valor is None
+
+
+class FakePuParCalculator:
+    def __init__(self, deveria_falhar: bool = False) -> None:
+        self.chamado_com: Debenture | None = None
+        self._deveria_falhar = deveria_falhar
+
+    def preencher(self, debenture: Debenture) -> None:
+        self.chamado_com = debenture
+        if self._deveria_falhar:
+            raise RuntimeError("bcb.gov.br indisponível")
+
+
+def test_build_ficha_chama_pu_par_calculator_por_ultimo() -> None:
+    calculadora = FakePuParCalculator()
+    aggregator = DebentureAggregator(
+        search_providers=[FakeSearchProvider([REF])],
+        characteristics_providers=[FakeCharacteristicsProvider("SND", Debenture())],
+        pu_par_calculator=calculadora,
+    )
+    ficha = aggregator.build_ficha(REF)
+    assert calculadora.chamado_com is ficha
+
+
+def test_build_ficha_pu_par_calculator_com_falha_nao_derruba_ficha() -> None:
+    calculadora = FakePuParCalculator(deveria_falhar=True)
+    aggregator = DebentureAggregator(
+        search_providers=[FakeSearchProvider([REF])],
+        characteristics_providers=[FakeCharacteristicsProvider("SND", Debenture(taxa=SourcedValue("DI + 1%")))],
+        pu_par_calculator=calculadora,
+    )
+    ficha = aggregator.build_ficha(REF)
+    assert ficha.taxa.valor == "DI + 1%"
+
+
+def test_build_ficha_sem_pu_par_calculator_funciona_normalmente() -> None:
+    aggregator = DebentureAggregator(
+        search_providers=[FakeSearchProvider([REF])],
+        characteristics_providers=[FakeCharacteristicsProvider("SND", Debenture())],
+    )
+    ficha = aggregator.build_ficha(REF)
+    assert ficha is not None

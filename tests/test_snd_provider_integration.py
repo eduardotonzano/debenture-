@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from debenture_search.cache import SqliteCache
 from debenture_search.models import DebentureRef, SearchQuery
 from debenture_search.providers.snd import FONTE, SndScraperProvider
@@ -56,6 +58,10 @@ def _seed_cache(cache: SqliteCache) -> None:
     cache.set(
         FONTE, "inadimplencias", "global",
         (FIXTURES / "snd_inadimplencias_r.html").read_text(encoding="utf-8"),
+    )
+    cache.set(
+        FONTE, "pudeeventos", "BODY12",
+        (FIXTURES / "snd_pudeeventos_r.html").read_text(encoding="utf-8"),
     )
 
 
@@ -172,7 +178,11 @@ def test_fetch_events_retorna_repactuacoes_do_ativo(tmp_path) -> None:
     assert primeiro.valor.valor == "RCA - 16/10/1995"
 
 
-def test_fetch_events_ativo_sem_repactuacao_retorna_vazio(tmp_path) -> None:
+def test_fetch_events_ativo_sem_repactuacao_mas_com_pagamentos(tmp_path) -> None:
+    """BODY12 nunca repactuou, mas tem histórico de Juros/Amortização real
+    (PU de Eventos) — descoberto na Fase 5 pra alimentar o cálculo do PU
+    Par (ver pu_par.py). Sem CNPJ resolvido não haveria como consultar essa
+    fonte; o fixture de características já tem o <link rel="canonical">."""
     cache = SqliteCache(tmp_path / "cache.sqlite3")
     _seed_cache(cache)
     provider = SndScraperProvider(cache=cache)
@@ -181,7 +191,13 @@ def test_fetch_events_ativo_sem_repactuacao_retorna_vazio(tmp_path) -> None:
     resultado = provider.fetch_events(ref)
 
     assert resultado.sucesso
-    assert resultado.valor == []
+    assert len(resultado.valor) == 128
+    assert all(e.tipo.value in ("juros", "amortizacao") for e in resultado.valor)
+    mais_recente = resultado.valor[0]
+    assert mais_recente.tipo.value == "amortizacao"
+    assert mais_recente.data_prevista.isoformat() == "2026-08-24"
+    assert mais_recente.valor.valor == pytest.approx(33.333333)
+    assert "PU de Eventos" in mais_recente.fonte
 
 
 def test_marcar_registro_excluido_preenche_data_e_motivo(tmp_path) -> None:

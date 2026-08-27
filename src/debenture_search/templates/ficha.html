@@ -109,8 +109,12 @@
     <canvas id="grafico-precos" height="90"></canvas>
     <p class="hint" style="margin:8px 0 0">
       PU médio negociado vem do SND (negociações reais); PU indicativo vem
-      da ANBIMA (marcação a mercado, um ponto por dia útil). Sem dado num
-      dia, a linha correspondente simplesmente não aparece ali — nunca é
+      da ANBIMA (marcação a mercado, um ponto por dia útil). PU Par (linha
+      tracejada), quando aparece, é o valor real da ANBIMA Debêntures+ ou,
+      pra debêntures "DI + spread", calculado pela fórmula oficial da
+      ANBIMA a partir da Taxa DI histórica do Banco Central — nunca uma
+      estimativa a partir do percentual de PU/Par. Sem dado num dia, a
+      linha correspondente simplesmente não aparece ali — nunca é
       interpolada. Marcadores de evento (losango rosa) usam o preço
       disponível mais próximo da data real do evento — a data exata
       aparece no tooltip ao passar o mouse. Roda do mouse ou arrastar
@@ -147,6 +151,19 @@
         tension: 0,
       },
     ];
+    if (dados.pu_par.some(function (v) { return v != null; })) {
+      datasets.push({
+        label: "PU Par",
+        data: dados.pu_par,
+        spanGaps: false,
+        borderColor: "#2f6f8a",
+        backgroundColor: "transparent",
+        borderDash: [5, 3],
+        pointRadius: 1.5,
+        borderWidth: 1.5,
+        tension: 0,
+      });
+    }
     if (eventos.length) {
       datasets.push({
         type: "scatter",

@@ -17,16 +17,18 @@ from pathlib import Path
 
 import pytest
 
-from debenture_search.models import DebentureRef
+from debenture_search.models import DebentureRef, TipoEvento
 from debenture_search.providers.snd import (
     SndParsingError,
     _caracteristicas_encontrou_ativo,
     _extrair_cnpj_do_canonical,
+    _mapear_tipo_evento_pagamento,
     _parse_ativo_options,
     _parse_caracteristicas_html,
     _parse_emissor_options,
     _parse_inadimplencias_html,
     _parse_precos_html,
+    _parse_pu_de_eventos_html,
     _parse_registros_excluidos_html,
     _parse_repactuacoes_html,
     _parse_vencimentos_antecipados_html,
@@ -81,6 +83,9 @@ def test_parse_caracteristicas_html_campos_principais() -> None:
     assert deb.quantidade_emitida.valor == "19.000"
     assert deb.quantidade_mercado.valor == "6.000"
     assert deb.valor_nominal_unitario.valor == "5.215,572539"
+    # VNE (valor nominal na data de emissão, constante) — separado do
+    # nominal atualizado acima; é o insumo do cálculo de PU Par (pu_par.py).
+    assert deb.valor_nominal_emissao.valor == "10.000,000000"
     assert deb.situacao.valor == "Registrado"
     # Rating vazio nesta amostra (campo existe na página, mas sem valor
     # preenchido para esta debênture específica) — indisponível é o
@@ -102,6 +107,7 @@ def test_parse_caracteristicas_html_campos_principais() -> None:
         deb.isin, deb.codigo_ativo, deb.emissor_nome, deb.indexador, deb.taxa,
         deb.data_emissao, deb.data_vencimento, deb.especie, deb.classe,
         deb.quantidade_emitida, deb.quantidade_mercado, deb.valor_nominal_unitario,
+        deb.valor_nominal_emissao,
         deb.situacao, deb.forma, deb.registro_cvm_emissao, deb.ato_societario,
         deb.inicio_distribuicao, deb.banco_mandatario, deb.agente_fiduciario,
         deb.instituicao_depositaria, deb.coordenador_lider,
@@ -208,3 +214,44 @@ def test_parse_inadimplencias_html_sem_resultado() -> None:
 def test_parse_inadimplencias_html_conteudo_desconhecido_falha_alto() -> None:
     with pytest.raises(SndParsingError):
         _parse_inadimplencias_html("<html><body>algo diferente</body></html>")
+
+
+def test_mapear_tipo_evento_pagamento_juros() -> None:
+    assert _mapear_tipo_evento_pagamento("Juros") == TipoEvento.JUROS
+
+
+def test_mapear_tipo_evento_pagamento_amortizacao_com_acento() -> None:
+    assert _mapear_tipo_evento_pagamento("Amortização") == TipoEvento.AMORTIZACAO
+
+
+def test_mapear_tipo_evento_pagamento_amortizacao_com_acento_corrompido() -> None:
+    # Mesma corrupção real do HAR exportado pelo navegador (ver docstring do
+    # módulo de testes) — o prefixo sem acento precisa sobreviver a isso.
+    assert _mapear_tipo_evento_pagamento("Amortiza��o") == TipoEvento.AMORTIZACAO
+
+
+def test_mapear_tipo_evento_pagamento_desconhecido_e_none() -> None:
+    assert _mapear_tipo_evento_pagamento("Repactuação") is None
+    assert _mapear_tipo_evento_pagamento("") is None
+
+
+def test_parse_pu_de_eventos_html() -> None:
+    """Contra HTML real (tests/fixtures/snd_pudeeventos_r.html, ativo
+    BODY12, capturado via HAR pelo usuário) — 128 linhas de dados no
+    fixture real."""
+    html = (FIXTURES / "snd_pudeeventos_r.html").read_text(encoding="utf-8")
+    linhas = _parse_pu_de_eventos_html(html)
+
+    assert len(linhas) == 128
+    mais_recente = linhas[0]
+    data, ativo, tipo, valor, situacao, liquidacao = mais_recente
+    assert data.isoformat() == "2026-08-24"
+    assert ativo == "BODY12"
+    assert tipo == TipoEvento.AMORTIZACAO
+    assert valor == pytest.approx(33.333333)
+    assert situacao == "Registrado"
+    assert liquidacao == "LIQUIDADO"
+
+    segunda = linhas[1]
+    assert segunda[2] == TipoEvento.JUROS
+    assert segunda[3] == pytest.approx(83.915585)

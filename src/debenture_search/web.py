@@ -100,22 +100,27 @@ def _parse_data_periodo(bruto: str | None) -> str | None:
 
 
 def _grafico_precos_json(precos: list[MarketPriceSnapshot]) -> str:
-    """Monta os dados do gráfico de preço ao longo do tempo — duas séries,
+    """Monta os dados do gráfico de preço ao longo do tempo — três séries,
     separadas pela fonte real de cada ponto (nunca misturadas num só
-    número): PU médio negociado (SND, preço de negociações reais) e PU
-    indicativo (ANBIMA, marcação a mercado). Datas sem nenhuma das duas
-    disponível são ignoradas; datas onde só uma fonte tem dado ficam com
-    `null` na outra série (Chart.js não interpola sobre `null`, então
+    número): PU médio negociado (SND, preço de negociações reais), PU
+    indicativo (ANBIMA, marcação a mercado) e PU Par (real da ANBIMA
+    Debêntures+ quando existe, senão calculado pela fórmula oficial da
+    ANBIMA — ver pu_par.py/pu_par_calculator.py; nunca os dois misturados
+    sem dizer qual é qual, mas aqui plotados juntos porque semanticamente
+    são o mesmo conceito independente de quem calculou). Datas sem nenhum
+    dado disponível são ignoradas; datas onde só uma série tem dado ficam
+    com `null` nas outras (Chart.js não interpola sobre `null`, então
     nunca insinua um valor que não existe)."""
     pontos: dict[str, dict[str, float]] = {}
     for p in precos:
-        if not p.pu_medio.disponivel:
-            continue
         data_iso = _parse_data_periodo(p.periodo_referencia)
         if data_iso is None:
             continue
-        origem = "anbima" if "ANBIMA" in (p.pu_medio.fonte or "") else "snd"
-        pontos.setdefault(data_iso, {})[origem] = p.pu_medio.valor
+        if p.pu_medio.disponivel:
+            origem = "anbima" if "ANBIMA" in (p.pu_medio.fonte or "") else "snd"
+            pontos.setdefault(data_iso, {})[origem] = p.pu_medio.valor
+        if p.pu_par.disponivel:
+            pontos.setdefault(data_iso, {})["pu_par"] = p.pu_par.valor
 
     datas_ordenadas = sorted(pontos)
     labels = [datetime.strptime(d, "%Y-%m-%d").strftime("%d/%m/%Y") for d in datas_ordenadas]
@@ -128,6 +133,7 @@ def _grafico_precos_json(precos: list[MarketPriceSnapshot]) -> str:
             "dates_iso": datas_ordenadas,
             "snd": [pontos[d].get("snd") for d in datas_ordenadas],
             "anbima": [pontos[d].get("anbima") for d in datas_ordenadas],
+            "pu_par": [pontos[d].get("pu_par") for d in datas_ordenadas],
         }
     )
 

@@ -167,6 +167,11 @@ class Debenture:
     quantidade_emitida: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     quantidade_mercado: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     valor_nominal_unitario: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    # VNE — valor nominal na DATA DE EMISSÃO (constante, nunca muda), usado
+    # como ponto de partida do cálculo de PU Par (ver pu_par.py). Diferente
+    # de `valor_nominal_unitario` acima, que é o nominal ATUALIZADO ("Nominal
+    # em {data}" do SND) — já reduzido pelas amortizações até aquela data.
+    valor_nominal_emissao: SourcedValue = field(default_factory=lambda: SourcedValue(None))
 
     situacao: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     motivo_saida: SourcedValue = field(default_factory=lambda: SourcedValue(None))

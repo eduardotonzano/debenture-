@@ -263,13 +263,35 @@ def test_grafico_precos_json_separa_snd_e_anbima_por_data() -> None:
     assert dados["dates_iso"] == ["2025-03-10", "2025-03-11"]
     assert dados["snd"] == [1000.0, None]
     assert dados["anbima"] == [None, 1050.0]
+    assert dados["pu_par"] == [None, None]
+
+
+def test_grafico_precos_json_inclui_pu_par_quando_disponivel() -> None:
+    import json
+
+    precos = [
+        MarketPriceSnapshot(
+            debenture_ref=REF, periodo_referencia="10/03/2025",
+            pu_medio=SourcedValue(1000.0, fonte="SND"),
+            pu_par=SourcedValue(987.65, fonte="Calculado (fórmula ANBIMA seção 25.4.1 + BCB SGS série 12)"),
+        ),
+        MarketPriceSnapshot(
+            debenture_ref=REF, periodo_referencia="11/03/2025",
+            pu_medio=SourcedValue(1010.0, fonte="SND"),
+            # sem pu_par disponível nesta data -> null, nunca interpolado
+        ),
+    ]
+
+    dados = json.loads(_grafico_precos_json(precos))
+
+    assert dados["pu_par"] == [987.65, None]
 
 
 def test_grafico_precos_json_vazio_sem_precos() -> None:
     import json
 
     assert json.loads(_grafico_precos_json([])) == {
-        "labels": [], "dates_iso": [], "snd": [], "anbima": [],
+        "labels": [], "dates_iso": [], "snd": [], "anbima": [], "pu_par": [],
     }
 
 
@@ -303,6 +325,38 @@ def test_ficha_com_precos_renderiza_grafico() -> None:
     assert 'id="grafico-precos"' in r.text
     assert "10/03/2025" in r.text
     assert "/static/vendor/chart.umd.min.js" in r.text
+
+
+def test_ficha_com_pu_par_mostra_terceira_linha_no_grafico() -> None:
+    class FakeMarketData:
+        name = "fake-market"
+
+        def is_available(self):
+            return True
+
+        def fetch_market_data(self, ref):
+            snaps = [
+                MarketPriceSnapshot(
+                    debenture_ref=ref, periodo_referencia="10/03/2025",
+                    pu_medio=SourcedValue(1000.0, fonte="SND"),
+                    pu_par=SourcedValue(987.65, fonte="Calculado (fórmula ANBIMA seção 25.4.1 + BCB SGS série 12)"),
+                )
+            ]
+            return ProviderResult.ok(self.name, snaps)
+
+    def factory() -> DebentureAggregator:
+        return DebentureAggregator(
+            search_providers=[FakeSearchProvider([REF])],
+            characteristics_providers=[FakeCharacteristicsProvider()],
+            market_data_providers=[FakeMarketData()],
+        )
+
+    client = TestClient(create_app(aggregator_factory=factory))
+    r = client.get("/ficha", params={"codigo_ativo": "BODY12"})
+
+    assert r.status_code == 200
+    assert "987.65" in r.text
+    assert "PU Par" in r.text
 
 
 def test_ficha_sem_precos_nao_quebra_grafico() -> None:

@@ -18,9 +18,11 @@ from debenture_search.config import (
 )
 from debenture_search.aggregator import DebentureAggregator
 from debenture_search.providers.anbima_api import AnbimaAPIProvider
+from debenture_search.providers.bcb_di import BancoCentralDiProvider
 from debenture_search.providers.cvm import CvmDocumentsProvider
 from debenture_search.providers.manual import ManualInputProvider
 from debenture_search.providers.snd import SndScraperProvider
+from debenture_search.pu_par_calculator import PuParCalculator
 
 
 def build_aggregator() -> DebentureAggregator:
@@ -33,6 +35,9 @@ def build_aggregator() -> DebentureAggregator:
     )
     manual = ManualInputProvider(MANUAL_INPUT_DB_PATH)
     cvm = CvmDocumentsProvider(cache_dir=DATA_DIR / "cvm_ipe")
+    # API pública do BCB (sem credencial) — fonte da Taxa DI histórica
+    # exigida pelo cálculo de PU Par (ver pu_par.py/pu_par_calculator.py).
+    pu_par_calculator = PuParCalculator(bcb=BancoCentralDiProvider())
 
     return DebentureAggregator(
         search_providers=[snd],
@@ -48,4 +53,5 @@ def build_aggregator() -> DebentureAggregator:
         # CVM precisa do CNPJ que o SND resolve em characteristics_providers
         # (roda antes) — sem CNPJ disponível, simplesmente não retorna nada.
         documents_providers=[cvm],
+        pu_par_calculator=pu_par_calculator,
     )
