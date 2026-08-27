@@ -5,7 +5,7 @@ nome da empresa emissora — retorna uma ficha completa do ativo (não um
 dashboard de múltiplos ativos), com cada campo marcado com sua fonte ou
 "indisponível". Uso interno/pessoal, sem autenticação multiusuário.
 
-## Status (Fase 1 + Fase 2 + Fase 3 + Fase 4 concluídas)
+## Status (Fase 1 + Fase 2 + Fase 3 + Fase 4 concluídas; Fase 5 em andamento)
 
 O que está implementado e testado:
 
@@ -156,8 +156,62 @@ O que está implementado e testado:
   (`static/vendor/`, servidos pela própria aplicação via `StaticFiles`)
   em vez de CDN externo — testado que evita depender de domínio de
   terceiros pro gráfico renderizar.
-- 82 testes automatizados (parsing + integração dos providers + cache +
-  aggregator + rotas web), todos rodam sem rede.
+- 107 testes automatizados (parsing + integração dos providers + cache +
+  aggregator + rotas web + motor de cálculo do PU Par), todos rodam sem rede.
+
+### Fase 5 (em andamento): motor de cálculo do PU Par
+
+O `pu_par` que a ANBIMA Feed devolve pronto só existe pra "Debêntures+"
+(ver acima) — pra debêntures normais só temos o percentual. Em vez de
+inventar o valor absoluto a partir do percentual (matematicamente errado,
+ver ressalva acima), fomos atrás da fórmula oficial:
+
+- **Fórmula confirmada por fonte primária**: ANBIMA, "Metodologias ANBIMA
+  de Precificação" (dez/2023, PDF público —
+  `anbima.com.br/data/files/9E/67/9D/6F/382788107D83F688EA2BA2A8/Metodologias-ANBIMA-de%20Precificacao-2023.pdf`),
+  seção 25.4.1 "Debêntures — Debêntures remuneradas pelo DI" (páginas
+  54-56): `PU PAR = VNA × Fator de Juros`, onde o Fator de Juros é um
+  produtório diário de `(1 + TaxaDI/100)^(1/252)` (Taxa DI-Over, % a.a.,
+  base 252, divulgada pela B3) desde o último pagamento de juros até a
+  data de referência, multiplicado pelo spread contratual (`DI + spread`)
+  ou ajustado pelo percentual contratual (`% do DI`). O expoente `1/252`
+  se perde na extração em texto do PDF na seção de debêntures, mas está
+  visível na seção de CRA do mesmo documento (página 74), com a mesma
+  definição textual de "Taxa DI" — recuperado por conferência cruzada
+  dentro do próprio PDF, não por suposição externa. Implementado em
+  `pu_par.py`, testado com invariantes matemáticos (12 testes, sem rede).
+- **Fonte da Taxa DI histórica**: API pública do Banco Central (SGS —
+  Sistema Gerenciador de Séries Temporais), série 12 ("Taxa de juros -
+  CDI"), sem autenticação: `GET
+  api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=...&dataFinal=...`.
+  Contrato público, estável há mais de uma década (usado por bibliotecas
+  abertas como `python-bcb`). Implementado em `providers/bcb_di.py`
+  (`BancoCentralDiProvider`), testado com http_client falso (13 testes).
+  **Ainda não validado por uma chamada real** — `bcb.gov.br` está
+  bloqueado neste sandbox de desenvolvimento, mesma restrição que afetou
+  SND/ANBIMA/CVM; precisa ser confirmado rodando fora daqui, igual já
+  fizemos com a ANBIMA Feed.
+- **Gap real encontrado, ainda não resolvido**: a fórmula acumula a Taxa DI
+  *desde o último evento de pagamento de juros* — pra calcular isso pra
+  uma data de referência qualquer no passado, é preciso saber o
+  calendário real de cupom da debênture (datas de pagamento de juros já
+  ocorridas) e o VNA vigente em cada reset. Nenhuma fonte já integrada
+  nesse projeto expõe esse calendário — o SND só tem eventos de
+  Repactuação estruturados (`fetch_events`). Achamos duas páginas do SND
+  ainda não investigadas, em "Eventos Financeiros": `PU de Eventos`
+  (`consultaadados/eventosfinanceiros/pudeeventos_f.asp`) e `Agenda`
+  (`consultaadados/eventosfinanceiros/agenda_f.asp`) — parecem o lugar
+  certo pra isso, mas o contrato real (HTML dos formulários e do
+  resultado) ainda não foi capturado. Sem isso, não dá pra fechar a
+  integração ponta a ponta sem arriscar acumular a Taxa DI a partir de
+  uma data errada — o que produziria um PU Par plausível, mas incorreto.
+  Também falta: parsear o spread numérico de `Debenture.taxa` já tem
+  `parse_spread_di_aa()` (só reconhece o formato aditivo "DI + X%", que é
+  o único que o SND produz hoje — devolve `None`, nunca um palpite, pra
+  qualquer outro formato/indexador) — mas debêntures "percentual do DI"
+  (ex.: "120% do DI") não são distinguíveis das aditivas na extração atual
+  do SND (o site expõe indexador e número em campos separados, sem marcar
+  qual dos dois tipos de contrato é).
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
 a heurística de "isso parece um código de ativo?" na busca (usada pra
