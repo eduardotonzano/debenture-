@@ -9,22 +9,24 @@ providers fake, sem precisar de rede nem de um banco de cache real.
 
 from __future__ import annotations
 
+import json
 import secrets
 import urllib.parse
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from debenture_search import config
 from debenture_search.aggregator import Ambiguous, DebentureAggregator
 from debenture_search.compose import build_aggregator
 from debenture_search.config import MANUAL_INPUT_DB_PATH
-from debenture_search.models import DebentureRef
+from debenture_search.models import DebentureRef, MarketPriceSnapshot
 from debenture_search.providers.manual import CAMPOS_SUPORTADOS, ManualInputProvider
 from debenture_search.query_parsing import infer_query
 from debenture_search.ref_params import ref_from_params, ref_to_params
@@ -60,6 +62,7 @@ def _exigir_autenticacao(
         )
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 
 _CAMPO_ROTULOS = {
     "rating": "Rating",
@@ -82,6 +85,49 @@ def _fmt(valor: object) -> str:
     return str(valor)
 
 
+def _parse_data_periodo(bruto: str | None) -> str | None:
+    """`periodo_referencia` vem em formatos diferentes por fonte (SND:
+    DD/MM/YYYY; ANBIMA: YYYY-MM-DD) — normaliza pra ISO só pra poder
+    ordenar/agrupar por data no gráfico, sem mudar o campo original."""
+    if not bruto:
+        return None
+    for formato in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(bruto, formato).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _grafico_precos_json(precos: list[MarketPriceSnapshot]) -> str:
+    """Monta os dados do gráfico de preço ao longo do tempo — duas séries,
+    separadas pela fonte real de cada ponto (nunca misturadas num só
+    número): PU médio negociado (SND, preço de negociações reais) e PU
+    indicativo (ANBIMA, marcação a mercado). Datas sem nenhuma das duas
+    disponível são ignoradas; datas onde só uma fonte tem dado ficam com
+    `null` na outra série (Chart.js não interpola sobre `null`, então
+    nunca insinua um valor que não existe)."""
+    pontos: dict[str, dict[str, float]] = {}
+    for p in precos:
+        if not p.pu_medio.disponivel:
+            continue
+        data_iso = _parse_data_periodo(p.periodo_referencia)
+        if data_iso is None:
+            continue
+        origem = "anbima" if "ANBIMA" in (p.pu_medio.fonte or "") else "snd"
+        pontos.setdefault(data_iso, {})[origem] = p.pu_medio.valor
+
+    datas_ordenadas = sorted(pontos)
+    labels = [datetime.strptime(d, "%Y-%m-%d").strftime("%d/%m/%Y") for d in datas_ordenadas]
+    return json.dumps(
+        {
+            "labels": labels,
+            "snd": [pontos[d].get("snd") for d in datas_ordenadas],
+            "anbima": [pontos[d].get("anbima") for d in datas_ordenadas],
+        }
+    )
+
+
 def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> FastAPI:
     app = FastAPI(
         title="Motor de Busca de Debêntures",
@@ -90,6 +136,9 @@ def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> Fast
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["urlencode_params"] = _urlencode_params
     templates.env.globals["fmt"] = _fmt
+    # Chart.js vendorizado localmente (não via CDN) — evita que o gráfico
+    # da ficha dependa da disponibilidade de um domínio de terceiros.
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     def _manual_provider() -> ManualInputProvider:
         return ManualInputProvider(MANUAL_INPUT_DB_PATH)
@@ -140,7 +189,14 @@ def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> Fast
         # no Jinja `sort` se algum documento vier sem data de publicação.
         deb.documentos.sort(key=lambda d: d.data_publicacao or date.min, reverse=True)
         return templates.TemplateResponse(
-            request, "ficha.html", {"deb": deb, "ref": ref, "ref_params": ref_to_params(ref)}
+            request,
+            "ficha.html",
+            {
+                "deb": deb,
+                "ref": ref,
+                "ref_params": ref_to_params(ref),
+                "grafico_precos_json": _grafico_precos_json(deb.precos),
+            },
         )
 
     @app.get("/manual", response_class=HTMLResponse)

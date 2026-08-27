@@ -94,6 +94,54 @@
 <div class="card">
   <h2>Mercado secundário</h2>
   {% if deb.precos %}
+  <div id="grafico-precos-wrap" style="margin-bottom:24px">
+    <canvas id="grafico-precos" height="90"></canvas>
+    <p class="hint" style="margin:8px 0 0">
+      PU médio negociado vem do SND (negociações reais); PU indicativo vem
+      da ANBIMA (marcação a mercado, um ponto por dia útil). Sem dado num
+      dia, a linha correspondente simplesmente não aparece ali — nunca é
+      interpolada.
+    </p>
+  </div>
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script>
+  (function () {
+    var dados = {{ grafico_precos_json | safe }};
+    if (!dados.labels.length) return;
+    var ctx = document.getElementById("grafico-precos").getContext("2d");
+    new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: dados.labels,
+        datasets: [
+          {
+            label: "PU médio negociado (SND)",
+            data: dados.snd,
+            spanGaps: false,
+            borderColor: "#4c5c3a",
+            backgroundColor: "transparent",
+            pointRadius: 2,
+            tension: 0.15,
+          },
+          {
+            label: "PU indicativo (ANBIMA)",
+            data: dados.anbima,
+            spanGaps: false,
+            borderColor: "#8a3324",
+            backgroundColor: "transparent",
+            pointRadius: 3,
+            tension: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "bottom" } },
+      },
+    });
+  })();
+  </script>
   <div style="overflow-x:auto">
   <table>
     <thead>

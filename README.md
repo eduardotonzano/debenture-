@@ -142,7 +142,15 @@ O que está implementado e testado:
   aqui, não escondido. Prospecto e Escritura de Emissão continuam
   indisponíveis — vêm de outro sistema da CVM (documentos de oferta
   pública), ainda não investigado.
-- 75 testes automatizados (parsing + integração dos providers + cache +
+- **Gráfico de preço ao longo do tempo** na ficha (Mercado Secundário):
+  duas séries, PU médio negociado (SND, negociações reais) e PU
+  indicativo (ANBIMA, marcação a mercado) — nunca misturadas num só
+  número, e sem interpolar sobre datas sem dado de uma das duas fontes
+  (`spanGaps: false`). Renderizado com Chart.js **vendorizado localmente**
+  (`static/vendor/chart.umd.min.js`, servido pela própria aplicação via
+  `StaticFiles`) em vez de um CDN externo — evita que o gráfico dependa
+  da disponibilidade de um domínio de terceiros.
+- 79 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:

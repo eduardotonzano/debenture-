@@ -23,7 +23,7 @@ from debenture_search.models import (
 )
 from debenture_search.providers.base import ProviderResult
 from debenture_search.providers.manual import ManualInputProvider
-from debenture_search.web import create_app
+from debenture_search.web import _grafico_precos_json, create_app
 
 REF = DebentureRef(isin="BRBODYDBS000", codigo_ativo="BODY12", nome_emissor="A Bodytech Participações")
 
@@ -237,3 +237,72 @@ def test_ficha_mostra_documentos_cvm_com_rotulo_e_descricao() -> None:
     assert "Fato Relevante" in r.text
     assert "Aviso aos Debenturistas" in r.text
     assert "10/03/2025" in r.text
+
+
+def test_grafico_precos_json_separa_snd_e_anbima_por_data() -> None:
+    import json
+
+    precos = [
+        MarketPriceSnapshot(
+            debenture_ref=REF, periodo_referencia="10/03/2025",
+            pu_medio=SourcedValue(1000.0, fonte="SND"),
+        ),
+        MarketPriceSnapshot(
+            debenture_ref=REF, periodo_referencia="2025-03-11",
+            pu_medio=SourcedValue(1050.0, fonte="ANBIMA Feed Preços e Índices (ref. 2025-03-11)"),
+        ),
+        # sem pu_medio disponível -> ignorado, nunca vira um ponto fantasma
+        MarketPriceSnapshot(debenture_ref=REF, periodo_referencia="12/03/2025"),
+    ]
+
+    dados = json.loads(_grafico_precos_json(precos))
+
+    assert dados["labels"] == ["10/03/2025", "11/03/2025"]
+    assert dados["snd"] == [1000.0, None]
+    assert dados["anbima"] == [None, 1050.0]
+
+
+def test_grafico_precos_json_vazio_sem_precos() -> None:
+    import json
+
+    assert json.loads(_grafico_precos_json([])) == {"labels": [], "snd": [], "anbima": []}
+
+
+def test_ficha_com_precos_renderiza_grafico() -> None:
+    class FakeMarketData:
+        name = "fake-market"
+
+        def is_available(self):
+            return True
+
+        def fetch_market_data(self, ref):
+            snaps = [
+                MarketPriceSnapshot(
+                    debenture_ref=ref, periodo_referencia="10/03/2025",
+                    pu_medio=SourcedValue(1000.0, fonte="SND"),
+                )
+            ]
+            return ProviderResult.ok(self.name, snaps)
+
+    def factory() -> DebentureAggregator:
+        return DebentureAggregator(
+            search_providers=[FakeSearchProvider([REF])],
+            characteristics_providers=[FakeCharacteristicsProvider()],
+            market_data_providers=[FakeMarketData()],
+        )
+
+    client = TestClient(create_app(aggregator_factory=factory))
+    r = client.get("/ficha", params={"codigo_ativo": "BODY12"})
+
+    assert r.status_code == 200
+    assert 'id="grafico-precos"' in r.text
+    assert "10/03/2025" in r.text
+    assert "/static/vendor/chart.umd.min.js" in r.text
+
+
+def test_ficha_sem_precos_nao_quebra_grafico() -> None:
+    client = _client_com_refs([REF])
+    r = client.get("/ficha", params={"codigo_ativo": "BODY12"})
+
+    assert r.status_code == 200
+    assert "Nenhum dado de negociação disponível." in r.text
