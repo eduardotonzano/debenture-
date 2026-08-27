@@ -142,15 +142,21 @@ O que está implementado e testado:
   aqui, não escondido. Prospecto e Escritura de Emissão continuam
   indisponíveis — vêm de outro sistema da CVM (documentos de oferta
   pública), ainda não investigado.
-- **Gráfico de preço ao longo do tempo** na ficha (Mercado Secundário):
-  duas séries, PU médio negociado (SND, negociações reais) e PU
-  indicativo (ANBIMA, marcação a mercado) — nunca misturadas num só
+- **Gráfico de preço ao longo do tempo, interativo**, na ficha (Mercado
+  Secundário): duas séries — PU médio negociado (SND, negociações reais)
+  e PU indicativo (ANBIMA, marcação a mercado) — nunca misturadas num só
   número, e sem interpolar sobre datas sem dado de uma das duas fontes
-  (`spanGaps: false`). Renderizado com Chart.js **vendorizado localmente**
-  (`static/vendor/chart.umd.min.js`, servido pela própria aplicação via
-  `StaticFiles`) em vez de um CDN externo — evita que o gráfico dependa
-  da disponibilidade de um domínio de terceiros.
-- 79 testes automatizados (parsing + integração dos providers + cache +
+  (`spanGaps: false`). Marcadores de evento (losango) sobrepostos,
+  ancorados no preço disponível mais próximo da data real do evento (que
+  aparece no tooltip). Filtros de período (3M/6M/12M/24M/Total) e
+  zoom/pan (roda do mouse, arrastar, pinça no touch, botão de resetar) —
+  inspirado no gráfico do ANBIMA Data, mas construído só com dado que já
+  tínhamos (SND + ANBIMA Feed), sem tocar no site deles. Chart.js +
+  chartjs-plugin-zoom + hammer.js **vendorizados localmente**
+  (`static/vendor/`, servidos pela própria aplicação via `StaticFiles`)
+  em vez de CDN externo — testado que evita depender de domínio de
+  terceiros pro gráfico renderizar.
+- 82 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:

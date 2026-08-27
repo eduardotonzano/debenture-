@@ -95,51 +95,141 @@
   <h2>Mercado secundário</h2>
   {% if deb.precos %}
   <div id="grafico-precos-wrap" style="margin-bottom:24px">
+    <div class="grafico-toolbar" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px">
+      <button type="button" class="btn-secondary btn-periodo" data-meses="3">3M</button>
+      <button type="button" class="btn-secondary btn-periodo" data-meses="6">6M</button>
+      <button type="button" class="btn-secondary btn-periodo" data-meses="12">12M</button>
+      <button type="button" class="btn-secondary btn-periodo" data-meses="24">24M</button>
+      <button type="button" class="btn-secondary btn-periodo" data-meses="0">Total</button>
+      <button type="button" id="btn-reset-zoom" class="btn-secondary" style="margin-left:auto">Resetar zoom</button>
+    </div>
+    <style>
+      .btn-periodo.periodo-ativo { background: var(--accent); color: #fff; }
+    </style>
     <canvas id="grafico-precos" height="90"></canvas>
     <p class="hint" style="margin:8px 0 0">
       PU médio negociado vem do SND (negociações reais); PU indicativo vem
       da ANBIMA (marcação a mercado, um ponto por dia útil). Sem dado num
       dia, a linha correspondente simplesmente não aparece ali — nunca é
-      interpolada.
+      interpolada. Marcadores de evento (losango rosa) usam o preço
+      disponível mais próximo da data real do evento — a data exata
+      aparece no tooltip ao passar o mouse. Roda do mouse ou arrastar
+      dá zoom/navega no período.
     </p>
   </div>
   <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/vendor/hammer.min.js"></script>
+  <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
   <script>
   (function () {
     var dados = {{ grafico_precos_json | safe }};
+    var eventos = {{ grafico_eventos_json | safe }};
     if (!dados.labels.length) return;
-    var ctx = document.getElementById("grafico-precos").getContext("2d");
-    new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: dados.labels,
-        datasets: [
-          {
-            label: "PU médio negociado (SND)",
-            data: dados.snd,
-            spanGaps: false,
-            borderColor: "#4c5c3a",
-            backgroundColor: "transparent",
-            pointRadius: 2,
-            tension: 0.15,
-          },
-          {
-            label: "PU indicativo (ANBIMA)",
-            data: dados.anbima,
-            spanGaps: false,
-            borderColor: "#8a3324",
-            backgroundColor: "transparent",
-            pointRadius: 3,
-            tension: 0,
-          },
-        ],
+
+    var datasets = [
+      {
+        label: "PU médio negociado (SND)",
+        data: dados.snd,
+        spanGaps: false,
+        borderColor: "#4c5c3a",
+        backgroundColor: "transparent",
+        pointRadius: 1.5,
+        borderWidth: 1.5,
+        tension: 0.1,
       },
+      {
+        label: "PU indicativo (ANBIMA)",
+        data: dados.anbima,
+        spanGaps: false,
+        borderColor: "#8a3324",
+        backgroundColor: "transparent",
+        pointRadius: 3,
+        tension: 0,
+      },
+    ];
+    if (eventos.length) {
+      datasets.push({
+        type: "scatter",
+        label: "Eventos",
+        data: eventos.map(function (ev) {
+          return { x: ev.label_ancora, y: ev.y, _dataEvento: ev.data_evento, _tipo: ev.tipo };
+        }),
+        pointStyle: "rectRot",
+        pointRadius: 6,
+        pointHoverRadius: 7,
+        pointBackgroundColor: "#c0399f",
+        pointBorderColor: "#c0399f",
+        showLine: false,
+      });
+    }
+
+    var ctx = document.getElementById("grafico-precos").getContext("2d");
+    var chart = new Chart(ctx, {
+      type: "line",
+      data: { labels: dados.labels, datasets: datasets },
       options: {
         responsive: true,
         interaction: { mode: "index", intersect: false },
-        plugins: { legend: { position: "bottom" } },
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label: function (item) {
+                if (item.dataset.label === "Eventos") {
+                  var raw = item.raw;
+                  return "Evento (" + raw._tipo + ") em " + raw._dataEvento;
+                }
+                var v = item.parsed.y;
+                return item.dataset.label + ": " + (v == null ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+              },
+            },
+          },
+          zoom: {
+            pan: { enabled: true, mode: "x" },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+          },
+        },
+        scales: {
+          x: { ticks: { autoSkip: true, maxTicksLimit: 14, maxRotation: 45, minRotation: 0 } },
+        },
       },
     });
+
+    function aplicarPeriodo(meses) {
+      if (!meses) {
+        chart.options.scales.x.min = undefined;
+        chart.options.scales.x.max = undefined;
+      } else {
+        var ultimaIso = dados.dates_iso[dados.dates_iso.length - 1];
+        var corte = new Date(ultimaIso + "T00:00:00");
+        corte.setMonth(corte.getMonth() - meses);
+        var corteIso = corte.toISOString().slice(0, 10);
+        var indiceInicio = 0;
+        for (var i = 0; i < dados.dates_iso.length; i++) {
+          if (dados.dates_iso[i] >= corteIso) { indiceInicio = i; break; }
+        }
+        chart.options.scales.x.min = dados.labels[indiceInicio];
+        chart.options.scales.x.max = dados.labels[dados.labels.length - 1];
+      }
+      chart.update();
+    }
+
+    var botoesPeriodo = document.querySelectorAll(".btn-periodo");
+    botoesPeriodo.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        botoesPeriodo.forEach(function (b) { b.classList.remove("periodo-ativo"); });
+        btn.classList.add("periodo-ativo");
+        aplicarPeriodo(parseInt(btn.dataset.meses, 10));
+      });
+    });
+    document.getElementById("btn-reset-zoom").addEventListener("click", function () {
+      chart.resetZoom();
+    });
+
+    // Começa mostrando os últimos 6 meses, como no ANBIMA Data.
+    var botaoInicial = document.querySelector('.btn-periodo[data-meses="6"]');
+    botaoInicial.classList.add("periodo-ativo");
+    aplicarPeriodo(6);
   })();
   </script>
   <div style="overflow-x:auto">

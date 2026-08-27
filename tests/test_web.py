@@ -16,14 +16,16 @@ from debenture_search.models import (
     Debenture,
     DebentureRef,
     Document,
+    Event,
     MarketPriceSnapshot,
     SearchQuery,
     SourcedValue,
     TipoDocumento,
+    TipoEvento,
 )
 from debenture_search.providers.base import ProviderResult
 from debenture_search.providers.manual import ManualInputProvider
-from debenture_search.web import _grafico_precos_json, create_app
+from debenture_search.web import _grafico_eventos_json, _grafico_precos_json, create_app
 
 REF = DebentureRef(isin="BRBODYDBS000", codigo_ativo="BODY12", nome_emissor="A Bodytech Participações")
 
@@ -258,6 +260,7 @@ def test_grafico_precos_json_separa_snd_e_anbima_por_data() -> None:
     dados = json.loads(_grafico_precos_json(precos))
 
     assert dados["labels"] == ["10/03/2025", "11/03/2025"]
+    assert dados["dates_iso"] == ["2025-03-10", "2025-03-11"]
     assert dados["snd"] == [1000.0, None]
     assert dados["anbima"] == [None, 1050.0]
 
@@ -265,7 +268,9 @@ def test_grafico_precos_json_separa_snd_e_anbima_por_data() -> None:
 def test_grafico_precos_json_vazio_sem_precos() -> None:
     import json
 
-    assert json.loads(_grafico_precos_json([])) == {"labels": [], "snd": [], "anbima": []}
+    assert json.loads(_grafico_precos_json([])) == {
+        "labels": [], "dates_iso": [], "snd": [], "anbima": [],
+    }
 
 
 def test_ficha_com_precos_renderiza_grafico() -> None:
@@ -306,3 +311,84 @@ def test_ficha_sem_precos_nao_quebra_grafico() -> None:
 
     assert r.status_code == 200
     assert "Nenhum dado de negociação disponível." in r.text
+
+
+def test_grafico_eventos_json_ancora_no_preco_mais_proximo() -> None:
+    import json
+
+    precos = [
+        MarketPriceSnapshot(
+            debenture_ref=REF, periodo_referencia="10/03/2025",
+            pu_medio=SourcedValue(1000.0, fonte="SND"),
+        ),
+        MarketPriceSnapshot(
+            debenture_ref=REF, periodo_referencia="20/03/2025",
+            pu_medio=SourcedValue(1020.0, fonte="SND"),
+        ),
+    ]
+    eventos = [
+        Event(debenture_ref=REF, tipo=TipoEvento.REPACTUACAO, data_prevista=date(2025, 3, 12)),
+    ]
+
+    marcadores = json.loads(_grafico_eventos_json(eventos, precos))
+
+    assert len(marcadores) == 1
+    assert marcadores[0]["label_ancora"] == "10/03/2025"  # 12/03 está mais perto de 10/03 que de 20/03
+    assert marcadores[0]["y"] == 1000.0
+    assert marcadores[0]["data_evento"] == "12/03/2025"
+    assert marcadores[0]["tipo"] == "Repactuação"
+
+
+def test_grafico_eventos_json_sem_precos_fica_vazio() -> None:
+    import json
+
+    eventos = [Event(debenture_ref=REF, tipo=TipoEvento.REPACTUACAO, data_prevista=date(2025, 3, 12))]
+
+    assert json.loads(_grafico_eventos_json(eventos, [])) == []
+
+
+def test_ficha_com_eventos_e_precos_inclui_marcador_no_grafico() -> None:
+    class FakeMarketData:
+        name = "fake-market"
+
+        def is_available(self):
+            return True
+
+        def fetch_market_data(self, ref):
+            return ProviderResult.ok(
+                self.name,
+                [
+                    MarketPriceSnapshot(
+                        debenture_ref=ref, periodo_referencia="10/03/2025",
+                        pu_medio=SourcedValue(1000.0, fonte="SND"),
+                    )
+                ],
+            )
+
+    class FakeEvents:
+        name = "fake-events"
+
+        def is_available(self):
+            return True
+
+        def fetch_events(self, ref):
+            return ProviderResult.ok(
+                self.name,
+                [Event(debenture_ref=ref, tipo=TipoEvento.REPACTUACAO, data_prevista=date(2025, 3, 12))],
+            )
+
+    def factory() -> DebentureAggregator:
+        return DebentureAggregator(
+            search_providers=[FakeSearchProvider([REF])],
+            characteristics_providers=[FakeCharacteristicsProvider()],
+            market_data_providers=[FakeMarketData()],
+            events_providers=[FakeEvents()],
+        )
+
+    client = TestClient(create_app(aggregator_factory=factory))
+    r = client.get("/ficha", params={"codigo_ativo": "BODY12"})
+
+    assert r.status_code == 200
+    assert '"tipo": "Repactua' in r.text
+    assert "12/03/2025" in r.text
+    assert "chartjs-plugin-zoom.min.js" in r.text

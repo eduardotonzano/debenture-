@@ -26,7 +26,7 @@ from debenture_search import config
 from debenture_search.aggregator import Ambiguous, DebentureAggregator
 from debenture_search.compose import build_aggregator
 from debenture_search.config import MANUAL_INPUT_DB_PATH
-from debenture_search.models import DebentureRef, MarketPriceSnapshot
+from debenture_search.models import DebentureRef, Event, MarketPriceSnapshot
 from debenture_search.providers.manual import CAMPOS_SUPORTADOS, ManualInputProvider
 from debenture_search.query_parsing import infer_query
 from debenture_search.ref_params import ref_from_params, ref_to_params
@@ -122,10 +122,51 @@ def _grafico_precos_json(precos: list[MarketPriceSnapshot]) -> str:
     return json.dumps(
         {
             "labels": labels,
+            # ISO junto com o label formatado — o JS usa isso pra calcular
+            # os filtros de período (6M/12M/24M) sem precisar reinterpretar
+            # o formato brasileiro no navegador.
+            "dates_iso": datas_ordenadas,
             "snd": [pontos[d].get("snd") for d in datas_ordenadas],
             "anbima": [pontos[d].get("anbima") for d in datas_ordenadas],
         }
     )
+
+
+def _grafico_eventos_json(eventos: list[Event], precos: list[MarketPriceSnapshot]) -> str:
+    """Marcadores de evento pra sobrepor no gráfico de preços. Como um
+    evento raramente cai exatamente num dia com preço registrado, a
+    posição Y (e o label do eixo X, pra ficar alinhado com a série de
+    preço) usa a data com preço disponível mais PRÓXIMA do evento — a
+    data real do evento aparece no tooltip, nunca escondida. Eventos sem
+    nenhum preço próximo (nada em `precos`) ficam de fora do gráfico, não
+    aparecem num ponto inventado."""
+    pontos_por_data: dict[str, float] = {}
+    for p in precos:
+        if not p.pu_medio.disponivel:
+            continue
+        data_iso = _parse_data_periodo(p.periodo_referencia)
+        if data_iso:
+            pontos_por_data[data_iso] = p.pu_medio.valor
+
+    datas_com_preco = sorted(pontos_por_data)
+    marcadores = []
+    for e in eventos:
+        if e.data_prevista is None or not datas_com_preco:
+            continue
+        data_evento_iso = e.data_prevista.isoformat()
+        mais_proxima = min(
+            datas_com_preco,
+            key=lambda d: abs(datetime.strptime(d, "%Y-%m-%d").date() - e.data_prevista),
+        )
+        marcadores.append(
+            {
+                "label_ancora": datetime.strptime(mais_proxima, "%Y-%m-%d").strftime("%d/%m/%Y"),
+                "y": pontos_por_data[mais_proxima],
+                "data_evento": e.data_prevista.strftime("%d/%m/%Y"),
+                "tipo": "Repactuação" if e.tipo.value == "repactuacao" else e.tipo.value,
+            }
+        )
+    return json.dumps(marcadores)
 
 
 def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> FastAPI:
@@ -196,6 +237,7 @@ def create_app(aggregator_factory: AggregatorFactory = build_aggregator) -> Fast
                 "ref": ref,
                 "ref_params": ref_to_params(ref),
                 "grafico_precos_json": _grafico_precos_json(deb.precos),
+                "grafico_eventos_json": _grafico_eventos_json(deb.eventos, deb.precos),
             },
         )
 
