@@ -54,6 +54,14 @@ do portal ANBIMA Developers, capturadas via HAR pelo próprio usuário:
      Por isso este provider implementa `MarketDataProvider`, não
      `CharacteristicsProvider` (diferente da versão anterior deste
      arquivo, escrita antes de ter acesso ao contrato real).
+   - `GET /v1/debentures-mais/mercado-secundario`: mesmo formato (schema
+     `MercadoSecundarioDebenturesMais`, campos idênticos aos de cima),
+     mas pra "Debêntures+" — a categoria de debêntures incentivadas
+     (isentas de IR, Lei 12.431/11). Uma debênture incentivada NÃO
+     aparece na lista de `/v1/debentures/mercado-secundario` — por isso
+     este provider consulta os dois endpoints e funde os resultados; sem
+     isso, qualquer debênture incentivada ficaria sem preço da ANBIMA
+     mesmo com credencial válida.
 
 O que ainda NÃO foi confirmado por uma chamada real (o domínio da API está
 bloqueado no sandbox de desenvolvimento — mesma restrição que afetou
@@ -81,6 +89,7 @@ _TOKEN_URL = "https://api.anbima.com.br/oauth/access-token"
 _BASE_URL_PRODUCAO = "https://api.anbima.com.br/feed/precos-indices"
 _BASE_URL_SANDBOX = "https://api-sandbox.anbima.com.br/feed/precos-indices"
 _RECURSO_MERCADO_SECUNDARIO = "/v1/debentures/mercado-secundario"
+_RECURSO_MERCADO_SECUNDARIO_MAIS = "/v1/debentures-mais/mercado-secundario"
 
 # Margem de segurança antes do vencimento real do token, pra nunca usar um
 # access_token no instante exato em que expira.
@@ -114,8 +123,10 @@ class AnbimaAPIProvider:
         self._lock = Lock()
         self._access_token: str | None = None
         self._token_expira_monotonic: float = 0.0
-        self._lista_do_dia: list[dict] | None = None
-        self._lista_do_dia_capturada_em: date | None = None
+        # Uma entrada de cache por recurso (endpoint "normal" e "+"), cada
+        # uma com sua própria data de captura — uma chamada de rede por
+        # recurso serve qualquer busca feita no mesmo dia.
+        self._listas_do_dia: dict[str, tuple[date, list[dict]]] = {}
 
     def is_available(self) -> bool:
         return bool(self._client_id and self._client_secret)
@@ -150,21 +161,21 @@ class AnbimaAPIProvider:
             )
             return token
 
-    def _obter_lista_mercado_secundario_do_dia(self) -> list[dict]:
+    def _obter_lista_do_dia(self, recurso: str) -> list[dict]:
         hoje = date.today()
-        if self._lista_do_dia is not None and self._lista_do_dia_capturada_em == hoje:
-            return self._lista_do_dia
+        em_cache = self._listas_do_dia.get(recurso)
+        if em_cache is not None and em_cache[0] == hoje:
+            return em_cache[1]
 
         token = self._obter_access_token()
         resposta = self._http.get(
-            f"{self._base_url}{_RECURSO_MERCADO_SECUNDARIO}",
+            f"{self._base_url}{recurso}",
             headers={"client_id": self._client_id or "", "access_token": token},
         )
         resposta.raise_for_status()
         lista = resposta.json()
 
-        self._lista_do_dia = lista
-        self._lista_do_dia_capturada_em = hoje
+        self._listas_do_dia[recurso] = (hoje, lista)
         return lista
 
     def fetch_market_data(self, ref: DebentureRef) -> ProviderResult[list[MarketPriceSnapshot]]:
@@ -175,19 +186,35 @@ class AnbimaAPIProvider:
             # lista do dia com a referência buscada.
             return ProviderResult.ok(self.name, [])
 
-        try:
-            lista = self._obter_lista_mercado_secundario_do_dia()
-        except Exception as exc:
-            return ProviderResult.falha(self.name, str(exc))
+        snapshots: list[MarketPriceSnapshot] = []
+        erros: list[str] = []
+        # Consulta os dois endpoints (Debêntures normal + Debêntures+
+        # incentivadas) — uma debênture só aparece em um dos dois, mas não
+        # sabemos qual de antemão. Falha em um não descarta o outro.
+        for recurso, categoria in (
+            (_RECURSO_MERCADO_SECUNDARIO, ""),
+            (_RECURSO_MERCADO_SECUNDARIO_MAIS, "Debêntures+"),
+        ):
+            try:
+                lista = self._obter_lista_do_dia(recurso)
+            except Exception as exc:  # noqa: BLE001
+                erros.append(str(exc))
+                continue
+            snapshots.extend(
+                _parse_snapshot(ref, item, categoria=categoria)
+                for item in lista
+                if item.get("codigo_ativo") == codigo
+            )
 
-        itens_do_ativo = [item for item in lista if item.get("codigo_ativo") == codigo]
-        snapshots = [_parse_snapshot(ref, item) for item in itens_do_ativo]
+        if not snapshots and erros:
+            return ProviderResult.falha(self.name, "; ".join(erros))
         return ProviderResult.ok(self.name, snapshots)
 
 
-def _parse_snapshot(ref: DebentureRef, item: dict) -> MarketPriceSnapshot:
+def _parse_snapshot(ref: DebentureRef, item: dict, categoria: str = "") -> MarketPriceSnapshot:
     data_referencia = item.get("data_referencia")
-    fonte = f"{FONTE} (ref. {data_referencia})" if data_referencia else FONTE
+    sufixo = f" {categoria}" if categoria else ""
+    fonte = f"{FONTE}{sufixo} (ref. {data_referencia})" if data_referencia else f"{FONTE}{sufixo}"
     return MarketPriceSnapshot(
         debenture_ref=ref,
         periodo_referencia=data_referencia,

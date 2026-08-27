@@ -37,9 +37,16 @@ class _FakeResponse:
 
 
 class _FakeHttpClient:
-    def __init__(self, token_payload: dict, lista_payload: object) -> None:
+    """`lista_mais_payload` fica vazia por padrão — a maioria dos testes só
+    se importa com o endpoint "normal"; o teste dedicado ao endpoint
+    "Debêntures+" passa uma lista própria."""
+
+    def __init__(
+        self, token_payload: dict, lista_payload: object, lista_mais_payload: object = ()
+    ) -> None:
         self._token_payload = token_payload
         self._lista_payload = lista_payload
+        self._lista_mais_payload = list(lista_mais_payload)
         self.chamadas_post: list[dict] = []
         self.chamadas_get: list[dict] = []
 
@@ -49,6 +56,8 @@ class _FakeHttpClient:
 
     def get(self, url, params=None, headers=None):
         self.chamadas_get.append({"url": url, "params": params, "headers": headers})
+        if "debentures-mais" in url:
+            return _FakeResponse(self._lista_mais_payload)
         return _FakeResponse(self._lista_payload)
 
     def close(self) -> None:
@@ -114,10 +123,15 @@ def test_chamada_de_dados_usa_headers_client_id_e_access_token() -> None:
 
     provider.fetch_market_data(DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor=""))
 
-    assert len(fake_http.chamadas_get) == 1
-    chamada = fake_http.chamadas_get[0]
-    assert chamada["url"].endswith("/v1/debentures/mercado-secundario")
-    assert chamada["headers"] == {"client_id": "client-teste", "access_token": "tok-abc"}
+    # Um GET pro endpoint normal e outro pro "+" (Debêntures incentivadas)
+    # — a busca consulta os dois, já que não dá pra saber de antemão em
+    # qual lista o ativo está.
+    assert len(fake_http.chamadas_get) == 2
+    urls = {c["url"] for c in fake_http.chamadas_get}
+    assert any(u.endswith("/v1/debentures/mercado-secundario") for u in urls)
+    assert any(u.endswith("/v1/debentures-mais/mercado-secundario") for u in urls)
+    for chamada in fake_http.chamadas_get:
+        assert chamada["headers"] == {"client_id": "client-teste", "access_token": "tok-abc"}
 
 
 def test_fetch_market_data_filtra_pelo_codigo_ativo_buscado() -> None:
@@ -142,6 +156,58 @@ def test_fetch_market_data_filtra_pelo_codigo_ativo_buscado() -> None:
     # dia) — nunca devem ser inventados a partir do único valor disponível.
     assert snapshot.pu_minimo.disponivel is False
     assert snapshot.pu_maximo.disponivel is False
+
+
+def test_fetch_market_data_encontra_no_endpoint_debentures_mais() -> None:
+    """Debêntures incentivadas (Lei 12.431) só aparecem em
+    /v1/debentures-mais/mercado-secundario, nunca no endpoint normal."""
+    item_mais = {
+        "codigo_ativo": "INCT11",
+        "data_referencia": "2026-08-24",
+        "pu": 1500.50,
+        "taxa_indicativa": 6.789,
+    }
+    fake_http = _FakeHttpClient(
+        token_payload={"access_token": "tok-abc", "expires_in": 3600},
+        lista_payload=_lista_sintetica(),  # não tem INCT11
+        lista_mais_payload=[item_mais],
+    )
+    provider = _provider(fake_http)
+
+    resultado = provider.fetch_market_data(
+        DebentureRef(isin=None, codigo_ativo="INCT11", nome_emissor="")
+    )
+
+    assert resultado.sucesso
+    assert len(resultado.valor) == 1
+    snapshot = resultado.valor[0]
+    assert snapshot.pu_medio.valor == 1500.50
+    assert "Debêntures+" in snapshot.pu_medio.fonte
+
+
+def test_fetch_market_data_falha_num_endpoint_nao_descarta_o_outro() -> None:
+    class _HttpFalhaSoNoMais:
+        def post(self, url, data=None, json=None, headers=None):
+            return _FakeResponse({"access_token": "tok-abc", "expires_in": 3600})
+
+        def get(self, url, params=None, headers=None):
+            if "debentures-mais" in url:
+                raise RuntimeError("endpoint + fora do ar")
+            return _FakeResponse(_lista_sintetica())
+
+        def close(self) -> None:
+            pass
+
+    provider = AnbimaAPIProvider(
+        client_id="client-teste", client_secret="secret-teste", http_client=_HttpFalhaSoNoMais()
+    )
+
+    resultado = provider.fetch_market_data(
+        DebentureRef(isin=None, codigo_ativo="TEST12", nome_emissor="")
+    )
+
+    assert resultado.sucesso
+    assert len(resultado.valor) == 1
 
 
 def test_fetch_market_data_sem_codigo_ativo_nao_bate_rede() -> None:
@@ -172,7 +238,9 @@ def test_reutiliza_lista_do_dia_e_token_entre_buscas() -> None:
     provider.fetch_market_data(DebentureRef(isin=None, codigo_ativo="OUTR11", nome_emissor=""))
 
     assert len(fake_http.chamadas_post) == 1
-    assert len(fake_http.chamadas_get) == 1
+    # 2 chamadas na primeira busca (normal + "+"), 0 chamadas novas na
+    # segunda — tudo já em cache do dia.
+    assert len(fake_http.chamadas_get) == 2
 
 
 def test_token_expirado_dispara_nova_chamada_de_token() -> None:

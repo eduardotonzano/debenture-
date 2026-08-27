@@ -100,7 +100,12 @@ O que está implementado e testado:
   ativo/ISIN, só devolve a lista inteira do dia — o filtro pelo
   `codigo_ativo` buscado é feito localmente, com a lista cacheada em
   memória por dia. Novo campo `taxa_indicativa` em `MarketPriceSnapshot`,
-  exibido na tabela de Mercado Secundário da ficha.
+  exibido na tabela de Mercado Secundário da ficha. Também consulta
+  `/v1/debentures-mais/mercado-secundario` (mesmo schema, mas pra
+  Debêntures+ — a categoria de debêntures incentivadas, isentas de IR
+  pela Lei 12.431) e funde os dois resultados; sem isso, uma debênture
+  incentivada nunca apareceria em nenhum dos dois. Falha num dos dois
+  endpoints não descarta o resultado do outro.
 
   Pegadinha real encontrada durante a validação: o Client ID do app tem um
   caractere (`I` maiúsculo) visualmente idêntico a `l` minúsculo na fonte
@@ -129,7 +134,7 @@ O que está implementado e testado:
   aqui, não escondido. Prospecto e Escritura de Emissão continuam
   indisponíveis — vêm de outro sistema da CVM (documentos de oferta
   pública), ainda não investigado.
-- 73 testes automatizados (parsing + integração dos providers + cache +
+- 75 testes automatizados (parsing + integração dos providers + cache +
   aggregator + rotas web), todos rodam sem rede.
 
 Um bug real foi encontrado durante a validação visual da Fase 2 e corrigido:
