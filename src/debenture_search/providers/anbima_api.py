@@ -50,10 +50,15 @@ do portal ANBIMA Developers, capturadas via HAR pelo próprio usuário:
      mercado — `codigo_ativo`, `emissor`, `data_vencimento`, `pu`,
      `taxa_indicativa`, `taxa_compra`, `taxa_venda`, `desvio_padrao`,
      `duration`, `val_min_intervalo`, `val_max_intervalo`, `grupo`,
-     `data_referencia`, entre outros — não características de emissão.
-     Por isso este provider implementa `MarketDataProvider`, não
-     `CharacteristicsProvider` (diferente da versão anterior deste
-     arquivo, escrita antes de ter acesso ao contrato real).
+     `data_referencia`, `percent_pu_par` (percentual PU/par), entre
+     outros — não características de emissão. Por isso este provider
+     implementa `MarketDataProvider`, não `CharacteristicsProvider`
+     (diferente da versão anterior deste arquivo, escrita antes de ter
+     acesso ao contrato real). IMPORTANTE: esse schema NÃO tem `pu_par`
+     em valor absoluto — só o percentual. Calcular o valor absoluto a
+     partir do percentual seria inventar um dado que a fonte não afirma
+     diretamente, então `pu_par` fica indisponível pra debêntures normais
+     (só o schema "+" abaixo tem o valor pronto).
    - `GET /v1/debentures-mais/mercado-secundario`: mesmo formato (schema
      `MercadoSecundarioDebenturesMais`, campos idênticos aos de cima),
      mas pra "Debêntures+" — a categoria de debêntures incentivadas
@@ -224,4 +229,9 @@ def _parse_snapshot(ref: DebentureRef, item: dict, categoria: str = "") -> Marke
         # de propósito, nunca inventados a partir do único valor que existe.
         pu_medio=SourcedValue(item.get("pu"), fonte=fonte),
         taxa_indicativa=SourcedValue(item.get("taxa_indicativa"), fonte=fonte),
+        # pu_par (R$) só existe no schema de Debêntures+ (item.get retorna
+        # None pro endpoint normal, que só tem o percentual) — nunca
+        # calculado a partir de percentual_pu_par.
+        pu_par=SourcedValue(item.get("pu_par"), fonte=fonte),
+        percentual_pu_par=SourcedValue(item.get("percent_pu_par"), fonte=fonte),
     )

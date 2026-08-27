@@ -107,6 +107,14 @@ O que está implementado e testado:
   incentivada nunca apareceria em nenhum dos dois. Falha num dos dois
   endpoints não descarta o resultado do outro.
 
+  Também expõe **PU par** e **% PU/Par** (`pu_par`/`percentual_pu_par`
+  em `MarketPriceSnapshot`) — com uma ressalva importante: o schema do
+  endpoint normal só tem o **percentual**, não o valor absoluto de PU
+  par; só o schema "+" (Debêntures+) devolve o valor pronto em R$. O
+  valor absoluto NUNCA é calculado a partir do percentual pra debêntures
+  normais — ficaria "indisponível" em vez de arriscar um número que a
+  própria fonte não afirma diretamente.
+
   Pegadinha real encontrada durante a validação: o Client ID do app tem um
   caractere (`I` maiúsculo) visualmente idêntico a `l` minúsculo na fonte
   do portal — eu tinha transcrito errado a partir de um print antigo, o

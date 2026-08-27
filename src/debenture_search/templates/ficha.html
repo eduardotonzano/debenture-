@@ -94,11 +94,12 @@
 <div class="card">
   <h2>Mercado secundário</h2>
   {% if deb.precos %}
+  <div style="overflow-x:auto">
   <table>
     <thead>
       <tr>
         <th>Data</th><th>PU mínimo</th><th>PU médio</th><th>PU máximo</th>
-        <th>Taxa indicativa</th>
+        <th>Taxa indicativa</th><th>PU par</th><th>% PU/Par</th>
         <th>Qtd. negociada</th><th>Nº negócios</th><th>Fonte</th>
       </tr>
     </thead>
@@ -110,6 +111,8 @@
         <td>{{ fmt(p.pu_medio.valor) if p.pu_medio.disponivel else "—" }}</td>
         <td>{{ fmt(p.pu_maximo.valor) if p.pu_maximo.disponivel else "—" }}</td>
         <td>{{ fmt(p.taxa_indicativa.valor) if p.taxa_indicativa.disponivel else "—" }}</td>
+        <td>{{ fmt(p.pu_par.valor) if p.pu_par.disponivel else "—" }}</td>
+        <td>{{ fmt(p.percentual_pu_par.valor) if p.percentual_pu_par.disponivel else "—" }}</td>
         <td>{{ fmt(p.quantidade_negociada.valor) if p.quantidade_negociada.disponivel else "—" }}</td>
         <td>{{ fmt(p.numero_negocios.valor) if p.numero_negocios.disponivel else "—" }}</td>
         <td><span class="badge badge-fonte">{{ p.pu_medio.fonte or "—" }}</span></td>
@@ -117,6 +120,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% if deb.precos|length > 15 %}
   <p class="hint" style="margin-top:10px">Mostrando as 15 negociações mais recentes de {{ deb.precos|length }} no total.</p>
   {% endif %}

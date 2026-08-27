@@ -7,6 +7,7 @@
     "data_vencimento": "2030-01-15",
     "percentual_taxa": "DI + 2.0000%",
     "pu": 1048.987654,
+    "percent_pu_par": 100.93,
     "taxa_indicativa": 12.3456,
     "taxa_compra": 12.30,
     "taxa_venda": 12.40,

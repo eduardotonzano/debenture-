@@ -156,6 +156,10 @@ def test_fetch_market_data_filtra_pelo_codigo_ativo_buscado() -> None:
     # dia) — nunca devem ser inventados a partir do único valor disponível.
     assert snapshot.pu_minimo.disponivel is False
     assert snapshot.pu_maximo.disponivel is False
+    # % PU/Par vem pronto da API — pu_par em R$ não existe nesse endpoint
+    # (só no "+"), e nunca é calculado a partir do percentual.
+    assert snapshot.percentual_pu_par.valor == 100.93
+    assert snapshot.pu_par.disponivel is False
 
 
 def test_fetch_market_data_encontra_no_endpoint_debentures_mais() -> None:
@@ -166,6 +170,8 @@ def test_fetch_market_data_encontra_no_endpoint_debentures_mais() -> None:
         "data_referencia": "2026-08-24",
         "pu": 1500.50,
         "taxa_indicativa": 6.789,
+        "pu_par": 1487.32,
+        "percent_pu_par": 100.885,
     }
     fake_http = _FakeHttpClient(
         token_payload={"access_token": "tok-abc", "expires_in": 3600},
@@ -183,6 +189,9 @@ def test_fetch_market_data_encontra_no_endpoint_debentures_mais() -> None:
     snapshot = resultado.valor[0]
     assert snapshot.pu_medio.valor == 1500.50
     assert "Debêntures+" in snapshot.pu_medio.fonte
+    # pu_par em R$ só existe nesse endpoint ("+") — confirmado capturado.
+    assert snapshot.pu_par.valor == 1487.32
+    assert snapshot.percentual_pu_par.valor == 100.885
 
 
 def test_fetch_market_data_falha_num_endpoint_nao_descarta_o_outro() -> None:

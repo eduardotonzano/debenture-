@@ -98,6 +98,12 @@ class MarketPriceSnapshot:
     # Taxa indicativa de mercado (ex.: marcação ANBIMA) — diferente da taxa
     # contratual (indexador + spread) já coberta por Debenture.taxa.
     taxa_indicativa: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    # PU par em R$: só a ANBIMA Feed "Debêntures+" (incentivadas) devolve
+    # esse valor pronto — debêntures normais só têm o percentual abaixo.
+    # Nunca calculado a partir do percentual (seria inventar um valor que
+    # a própria fonte não afirma).
+    pu_par: SourcedValue = field(default_factory=lambda: SourcedValue(None))
+    percentual_pu_par: SourcedValue = field(default_factory=lambda: SourcedValue(None))
     coletado_em: datetime | None = None
 
 
